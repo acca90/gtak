@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pastel City</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #1a1c2c; overflow: hidden; }
+  #screen {
+    position: absolute; left: 0; top: 0;
+    cursor: none;
+  }
+  #err {
+    position: absolute; left: 8px; top: 8px; right: 8px; color: #ff5f7e;
+    font: 14px monospace; white-space: pre-wrap; pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="screen"></canvas>
+<div id="err"></div>
+<script>
+  addEventListener('error', (e) => { document.getElementById('err').textContent += (e.message || e) + '\n' + (e.error && e.error.stack || '') + '\n'; });
+</script>
+<script src="assets/atlas.js"></script>
+<script src="src/core.js"></script>
+<script src="src/city.js"></script>
+<script src="src/render.js"></script>
+<script src="src/entities.js"></script>
+<script src="src/phone.js"></script>
+<script src="src/missions.js"></script>
+<script src="src/game.js"></script>
+<script>
+  window.showErr = (e) => { document.getElementById('err').textContent += e + '\n' + (e && e.stack || '') + '\n'; };
+  Assets.load(() => { try { Main.boot(); } catch (e) { showErr(e); } });
+</script>
+</body>
+</html>

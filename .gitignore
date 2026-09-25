@@ -1,0 +1,6 @@
+# third-party style references (not ours to redistribute)
+refs/
+# editor / OS noise
+.DS_Store
+*.swp
+.vscode/

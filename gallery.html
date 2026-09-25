@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asset Gallery</title>
+<style>
+  :root { --bg: #1a1c2c; --panel: #2b2d42; --ink: #f2efe6; --dim: #7f8198; --accent: #f29b88; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 13px/1.4 ui-monospace, monospace; }
+  header { position: sticky; top: 0; background: var(--bg); padding: 12px 16px; border-bottom: 1px solid var(--panel); z-index: 2; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  h1 { font-size: 16px; margin: 0; color: var(--accent); }
+  nav a { color: var(--dim); margin-right: 10px; text-decoration: none; }
+  nav a:hover { color: var(--ink); }
+  label { color: var(--dim); }
+  section { padding: 8px 16px 24px; }
+  h2 { font-size: 14px; color: var(--accent); margin: 16px 0 8px; }
+  .tags { display: flex; flex-wrap: wrap; gap: 10px; }
+  .tag { background: var(--panel); border-radius: 6px; padding: 8px; }
+  .tag .name { color: var(--ink); margin-bottom: 6px; }
+  .tag .meta { color: var(--dim); font-size: 11px; }
+  canvas { image-rendering: pixelated; display: block;
+    background: repeating-conic-gradient(#3b3f58 0 25%, #464b66 0 50%) 0 0 / 16px 16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Pastel City: asset gallery</h1>
+  <label>zoom <input id="zoom" type="range" min="1" max="6" value="3"></label>
+  <label><input id="anim" type="checkbox" checked> animate</label>
+  <nav id="nav"></nav>
+</header>
+<main id="main"></main>
+<script src="assets/atlas.js"></script>
+<script>
+// Every Aseprite sheet, one card per tag, all frames side by side (or
+// animated). Regenerate with tools/art.sh and reload to review changes.
+const main = document.getElementById('main'), nav = document.getElementById('nav');
+const zoomEl = document.getElementById('zoom'), animEl = document.getElementById('anim');
+const images = {};
+const cards = [];
+
+function build() {
+  main.innerHTML = ''; nav.innerHTML = ''; cards.length = 0;
+  const z = +zoomEl.value;
+  for (const [name, s] of Object.entries(ATLAS)) {
+    const a = document.createElement('a'); a.href = '#' + name; a.textContent = name; nav.appendChild(a);
+    const sec = document.createElement('section'); sec.id = name;
+    sec.innerHTML = `<h2>${name} <span style="color:var(--dim)">${s.w}×${s.h} · ${s.frames} frames</span></h2>`;
+    const wrap = document.createElement('div'); wrap.className = 'tags';
+    for (const [tag, [from, to]] of Object.entries(s.tags)) {
+      const n = to - from + 1;
+      const card = document.createElement('div'); card.className = 'tag';
+      const perRow = Math.min(n, Math.max(1, Math.floor(900 / (s.w * z + 4))));
+      const rows = Math.ceil(n / perRow);
+      const cv = document.createElement('canvas');
+      cv.width = perRow * (s.w + 2) * z; cv.height = rows * (s.h + 2) * z;
+      const ctx = cv.getContext('2d'); ctx.imageSmoothingEnabled = false;
+      for (let i = 0; i < n; i++) {
+        ctx.drawImage(images[name], (from + i) * s.w, 0, s.w, s.h, (i % perRow) * (s.w + 2) * z, Math.floor(i / perRow) * (s.h + 2) * z, s.w * z, s.h * z);
+      }
+      card.innerHTML = `<div class="name">${tag}</div><div class="meta">${n} frame${n > 1 ? 's' : ''} · #${from}</div>`;
+      card.appendChild(cv);
+      if (n > 1) {
+        const an = document.createElement('canvas'); an.width = s.w * z; an.height = s.h * z;
+        an.getContext('2d').imageSmoothingEnabled = false;
+        card.appendChild(an);
+        cards.push({ an, name, s, from, n, ms: s.ms.slice(from, to + 1) });
+      }
+      wrap.appendChild(card);
+    }
+    sec.appendChild(wrap); main.appendChild(sec);
+  }
+}
+function tick(t) {
+  if (animEl.checked) for (const c of cards) {
+    const total = c.ms.reduce((a, b) => a + b, 0);
+    let k = t % total, i = 0;
+    while (k >= c.ms[i]) { k -= c.ms[i]; i++; }
+    const ctx = c.an.getContext('2d');
+    ctx.clearRect(0, 0, c.an.width, c.an.height);
+    ctx.drawImage(images[c.name], (c.from + i) * c.s.w, 0, c.s.w, c.s.h, 0, 0, c.an.width, c.an.height);
+  }
+  requestAnimationFrame(tick);
+}
+let left = Object.keys(ATLAS).length;
+for (const [name, s] of Object.entries(ATLAS)) {
+  const im = new Image();
+  im.onload = () => { if (--left === 0) { build(); requestAnimationFrame(tick); } };
+  im.src = s.src; images[name] = im;
+}
+zoomEl.oninput = build;
+</script>
+</body>
+</html>
