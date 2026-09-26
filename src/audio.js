@@ -29,6 +29,24 @@ const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
 const sndNop = () => {};
 const SND_NOOPTS = {};
 
+// Time of day for the ambience (spec docs/specs/time-v1.md §6). `dark` 0..1 comes from
+// Clock.light(); without a clock (soundboard) it is full day. Everything that follows the clock
+// is continuous in the hour, and the beds' gains glide on their own tau, so the O fast-forward
+// (6 h in 1.5 s) sweeps the levels instead of jumping.
+const sndLin = (x, a, b) => sndClamp((x - a) / (b - a), 0, 1);
+function sndDaytime() {
+  if (typeof Clock === 'undefined' || typeof G === 'undefined' || !G.clock) return { dark: 0, birds: 1 };
+  const h = Clock.hour(), dark = Clock.light().dark;
+  // songbirds: silent at night, dawn chorus 05:30-07:00 (x2.2), a normal day chorus (x1) by
+  // 09:00, thinning from 16:00 and gone by 19:30
+  const birds = h < 4.75 || h > 19.5 ? 0
+    : h < 5.5 ? 2.2 * sndLin(h, 4.75, 5.5)
+    : h < 7 ? 2.2
+    : h < 9 ? 2.2 - 1.2 * sndLin(h, 7, 9)
+    : 1 - sndLin(h, 16, 19.5);
+  return { dark, birds };
+}
+
 // Engine classes. The oscillator runs at the engine's firing frequency (Hz), from `idle` to `top`;
 // a low-pass keeps the harmonics that make the timbre. sub = second oscillator ratio, chug = depth
 // of the amplitude throb (at half the firing rate), noise = intake/exhaust hiss, gears = fake gear
@@ -658,7 +676,7 @@ const SND_SFX = {
     S.noise(out, t, { type: 'bandpass', f: 400, f1: 3000, q: 1.5, dur: 0.5, gain: 0.3 });
     return 0.6;
   } },
-  swoosh: { bus: 'ui', limit: 1, vol: 0.5, fn(S, out, t) { // O: day/night
+  swoosh: { bus: 'ui', limit: 1, vol: 0.5, fn(S, out, t) { // O: skip 6 hours (fast-forward)
     S.noise(out, t, { type: 'bandpass', f: 300, f1: 2500, f2: 400, glide: 0.55, q: 1.5, a: 0.3, dur: 1.1, gain: 1 });
     return 1.1;
   } },
@@ -1215,24 +1233,25 @@ const Sound = {
         else if (k === KIND.FIELD || k === KIND.DIRT) farm++;
       }
       const w = water / total, land = 1 - w, co = coast / total, gr = green / total, de = desert / total, fa = farm / total;
-      const zone = City.regionAt(cam.cx, cam.cy).zone, night = G.time === 2;
+      const zone = City.regionAt(cam.cx, cam.cy).zone, T = sndDaytime();
+      const night = sndLin(T.dark, 0.2, 0.9); // 0 day .. 1 night: rises ~17:40-20:45, falls ~05:00-07:00
       const pc = G.player.car, high = pc && pc.alt > 60 ? 0.5 : 0;
       const B = A.beds;
       B.bedSea = w > 0.99 ? 0.5 : w > 0 ? Math.min(1, 2.2 * Math.min(w, land) + 0.3 * co) : co > 0 ? 0.3 : 0;
-      B.bedCity = land * (zone === 'downtown' ? 0.9 : zone === 'highway' ? 0.35 : zone === 'airport' ? 0.3 : 0) * (night ? 0.7 : 1);
+      B.bedCity = land * (zone === 'downtown' ? 0.9 : zone === 'highway' ? 0.35 : zone === 'airport' ? 0.3 : 0) * (1 - 0.3 * night);
       B.bedSuburb = land * (zone === 'suburbs' ? 0.8 : 0);
       B.bedIndustrial = land * (zone === 'industrial' ? 0.9 : 0);
       B.bedWind = Math.min(1, (zone === 'rural' || zone === 'wild' || zone === 'airport' ? 0.7 : 0.1) * (1 - de) * land + high);
       B.bedDesert = Math.min(1, de * 1.6);
-      B.bedCrickets = night ? Math.min(1, (gr + fa) * 1.4) : 0;
+      B.bedCrickets = night * Math.min(1, (gr + fa) * 1.4);
       // critters
       const rpt = (kind) => { // a random sample point of that kind → this._tx/_ty
         const m = pts.length / 3;
         for (let tries = 0; tries < 6 && m; tries++) { const i = Math.floor(Math.random() * m) * 3; if (pts[i + 2] === kind) { this._tx = pts[i]; this._ty = pts[i + 1]; return true; } }
         return false;
       };
-      if (!night && (co > 0.05 || (w > 0.1 && land > 0.1)) && Math.random() < 0.07 && (rpt(1) || rpt(2))) this.fire('gull', this._tx, this._ty, SND_NOOPTS);
-      if (G.time === 0 && gr > 0.25 && Math.random() < 0.25 * gr && rpt(2)) this.fire('songbird', this._tx, this._ty, SND_NOOPTS);
+      if ((co > 0.05 || (w > 0.1 && land > 0.1)) && Math.random() < 0.07 * (1 - night) && (rpt(1) || rpt(2))) this.fire('gull', this._tx, this._ty, SND_NOOPTS);
+      if (T.birds > 0 && gr > 0.25 && Math.random() < 0.25 * gr * T.birds && rpt(2)) this.fire('songbird', this._tx, this._ty, SND_NOOPTS);
       if (zone === 'industrial' && Math.random() < 0.08) this.fire('clank', cam.cx + sndRand(-0.5, 0.5) * cam.w, cam.cy + sndRand(-0.5, 0.5) * cam.h, SND_NOOPTS);
       const I = typeof Render !== 'undefined' && Render.idx;
       if (I) {
@@ -1446,7 +1465,7 @@ Sound.catalog = [
     { shot: 'fail', label: 'Mission failed' },
     { shot: 'wasted', label: 'WASTED' },
     { shot: 'start', label: 'Title: start' },
-    { shot: 'swoosh', label: 'Day / night swoosh' },
+    { shot: 'swoosh', label: 'Skip 6 hours swoosh (O)' },
     { loop: 'ringtone', label: 'Cellphone ringtone' },
     { loop: 'ringback', label: 'Calling tone' },
     { shot: 'phoneOpen', label: 'Phone open' },

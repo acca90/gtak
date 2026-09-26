@@ -1,6 +1,34 @@
 # coordinator — cross-cutting decisions
 Written by the main session (not a subagent). Format: `.claude/rules/decisions.md`. Newest first.
 
+## 2026-09-26 · Traffic phase B: lanes, driver, pool, reactions; all-red light phase
+- **Decision:** geo-agent's lane graph (`c.lanes`/`c.nodes`, right-hand traffic) + vehicles-agent's driver in
+  `src/traffic.js` (steers via the player's control interface, so model stats apply) + the coordinator's pool in
+  `Game.setupTraffic` (zone densities from `ZONES[z].traffic`, spawn clearance = stopping distance, never near a stop
+  line). Signals run a 22 s cycle with a 1 s all-red. Reactions: honk + pass when blocked, flee when hit; no
+  carjacking, no ramming back, no police in traffic. Demo hooks `lanes`, `warm=N`.
+- **Why:** the user's choices of 2026-09-26 (region mixes, 35% cruise, obey lights, honk + flee).
+- **Status:** active; not play-tested. Open: downtown density reads thin on screen (budget 12 over the whole AOV).
+
+## 2026-09-26 · Area of view (AOV) and traffic unlocked (spec: docs/specs/traffic-v1.md)
+- **Decision:** the user unlocked traffic (pedestrians still later). `src/aov.js` is the shared streaming system:
+  AOV = 2.5x the widest-zoom view per axis around the camera centre, `keep` = AOV x1.2, nothing spawns or vanishes
+  on screen (+64 px). Untouched parked cars are **not** streamed; a car the player drives, damages or shoves > 24 px
+  becomes `managed` and is dropped outside `keep`; its home spot refills out of sight. Never dropped: the player's
+  car, the tank, aircraft, mission cars (`c.target`). Cars outside `keep` that are parked and still sleep.
+  Car-vs-car uses a 160 px grid. Far fewer parked cars (geo-agent, A4).
+- **Why:** the user's plan, so traffic, pedestrians and police don't overload the browser. Measured: update 7.4 -> 0.32 ms/tick.
+- **Status:** active; not play-tested
+
+## 2026-09-26 · In-game clock (spec: docs/specs/time-v1.md)
+- **Decision:** a real clock in `src/clock.js`: 1 game minute per real second (a day = 24 real min), new game
+  at day 1 08:00, stops only when the world stops (pause, title, store). Light is one look value `s` (0 day,
+  1 dusk/dawn, 2 night) from `LOOK_KEYS`; buildings cross-fade their cached looks. `G.time` is now derived,
+  read-only. O = +6 h fast-forward; N and pad button 8 are freed. Wanted-level decay (item 2) uses
+  **real** seconds, not the clock. Spend time with `Clock.advance(min, { fast })`; save `G.clock.min`.
+- **Why:** the user's answers of 2026-09-26; backlog item 0, needed by police, brothel and saves.
+- **Status:** active; T1-T5 built, not play-tested. Tint overlay (lilac dawn, gold afternoon) proposed by pixel-agent, not built
+
 ## 2026-09-26 · Gamepad L3 = horn on the ground, descend in a helicopter
 - **Decision:** `PADMAP.descend = [10]`, sharing L3 with `horn`. Helicopters have no horn and only the
   flight code reads `descend`, so the two never clash. Climb stays on A/X (`fire`).

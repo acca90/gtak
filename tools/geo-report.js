@@ -90,6 +90,41 @@ for (const a of c.neighborhoods) for (const b of c.neighborhoods) {
   if (ov && a.paint !== 'sea' && b.paint !== 'sea') problems.push(`overlapping neighbourhoods in ${a.district}: ${a.name} / ${b.name}`);
 }
 
+// traffic lane graph (City.buildLanes): every lane joins two nodes, every lane arriving at a
+// node has an exit, exits join a lane ending there to one starting there and never reverse
+// (U-turns only at 'turn' nodes), and no lane or exit path crosses water or a building
+const laneStats = { zones: {} };
+{
+  const L = c.lanes || [], N = c.nodes || [];
+  need(L.length > 0 && N.length > 0, 'no lane graph');
+  const solidK = (x, y) => { const k = KN[c.kind[tile(y) * c.W + tile(x)]]; return k === 'WATER' || k === 'BUILDING'; };
+  const hasExit = new Set();
+  let bad = 0;
+  for (const nd of N) for (const e of nd.exits) {
+    const a = L[e.from], b = L[e.to];
+    hasExit.add(e.from);
+    if (!a || !b || a.to !== nd.id || b.from !== nd.id) bad++;
+    else if (e.turn !== 'u' && a.dx * b.dx + a.dy * b.dy < -0.5) bad++;
+    else if (e.turn === 'u' && nd.kind !== 'turn') bad++;
+    else if (e.path.some((p) => solidK(p[0], p[1]))) bad++;
+  }
+  need(!bad, bad + ' bad lane exits (mismatched, reversed or through a wall/water)');
+  const noExit = L.filter((l) => !hasExit.has(l.id));
+  need(!noExit.length, noExit.length + ' lanes without an exit, e.g. lane ' + (noExit[0] || {}).id);
+  const wet = L.filter((l) => { for (let d = 0; d <= l.len; d += 8) if (solidK(l.x0 + l.dx * d, l.y0 + l.dy * d)) return true; return false; });
+  need(!wet.length, wet.length + ' lanes cross water or a building, e.g. ' + wet.slice(0, 3).map((l) => tp(l.x0, l.y0)).join(' '));
+  need(L.every((l) => Math.hypot(l.dx, l.dy) === 1 && (l.x1 - l.x0) * l.dx + (l.y1 - l.y0) * l.dy > 0), 'a lane runs against its direction');
+  need((City.laneAt(L[0].x0 + L[0].dx * 8, L[0].y0 + L[0].dy * 8) || {}).id === L[0].id, 'City.laneAt misses a lane');
+  for (const l of L) { const z = laneStats.zones[l.zone] || (laneStats.zones[l.zone] = { lanes: 0, tiles: 0 }); z.lanes++; z.tiles += l.len / TILE; }
+  laneStats.lanes = L.length; laneStats.nodes = N.length;
+  laneStats.int = N.filter((n) => n.kind === 'int').length; laneStats.turn = N.length - laneStats.int;
+  laneStats.signal = N.filter((n) => n.signal).length;
+  laneStats.exits = N.reduce((a, n) => a + n.exits.length, 0);
+  laneStats.stops = L.filter((l) => l.stop).length; laneStats.yields = L.filter((l) => l.yield).length;
+  laneStats.xings = L.filter((l) => l.xings).length;
+}
+const laneLine = () => `lanes ${laneStats.lanes}, nodes ${laneStats.nodes} (${laneStats.int} junctions, ${laneStats.signal} signalised, ${laneStats.turn} U-turn loops), exits ${laneStats.exits}, stop points ${laneStats.stops} (${laneStats.yields} give way), lanes over a level crossing ${laneStats.xings}`;
+
 const counts = {};
 for (let i = 0; i < c.W * c.H; i++) counts[KN[c.kind[i]]] = (counts[KN[c.kind[i]]] || 0) + 1;
 
@@ -97,6 +132,7 @@ if (checkOnly) {
   console.log(`build ${ms.toFixed(0)} ms (second run ${ms2.toFixed(0)} ms)`);
   console.log('phases (ms): ' + phases);
   console.log(`buildings ${c.buildings.length}, trees ${c.trees.length}, props ${c.props.length}, lamps ${c.lamps.length}, obstacles ${c.obstacles.length}, parked ${c.parked.length}, parkSpots ${c.parkSpots.length}, stalls ${c.stalls.length}, roadSpots ${c.roadSpots.length}, crates ${c.crateSpots.length}, talls ${c.talls.length}, sprites ${c.sprites.length}, signals ${c.trafficLights.length}`);
+  console.log(laneLine());
   console.log(`districts ${c.districts.length}, neighbourhoods ${c.neighborhoods.length}, streets ${c.streets.length}, places ${Object.keys(c.places).length}`);
   console.log(problems.length ? 'PROBLEMS:\n  ' + problems.join('\n  ') : 'checks ok');
   process.exit(problems.length ? 1 : 0);
@@ -188,6 +224,18 @@ P();
 P('| area | curb fill | mix (weights) |');
 P('|---|---|---|');
 for (const z of REGIONS) P(`| ${z.id} | ${Math.round(z.park * 100)}% | ${Object.entries(z.models).map(([m, w]) => `${m} ${w}`).join(', ')} |`);
+P();
+P('### Traffic lanes');
+P();
+P(`- ${laneLine()}.`);
+P('- Density = cars per 100 road tiles (spec traffic-v1 B.2); lane tiles = lane length / 16, two lanes per road.');
+P();
+P('| zone | lanes | lane tiles | density | traffic mix (weights) |');
+P('|---|---|---|---|---|');
+for (const z of REGIONS) {
+  const st = laneStats.zones[z.id] || { lanes: 0, tiles: 0 };
+  P(`| ${z.id} | ${st.lanes} | ${Math.round(st.tiles)} | ${z.traffic.density} | ${Object.entries(z.traffic.models).map(([m, w]) => `${m} ${w}`).join(', ')} |`);
+}
 P();
 P('### Streets');
 P();

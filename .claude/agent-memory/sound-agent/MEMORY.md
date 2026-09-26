@@ -1,6 +1,17 @@
 # sound-agent — decision log
 Format and rules: `.claude/rules/decisions.md`. Newest first.
 
+## 2026-09-26 · Ambience follows the clock (time-v1 T5)
+- **Decision:** there are no `G.time` checks in audio. `sndDaytime()` reads `Clock.light().dark`; `night = lin(dark, 0.2, 0.9)`
+  (rises about 17:40 to 20:45, falls about 05:00 to 07:00). Crickets = night × green/farm share; city bed × (1 − 0.3·night);
+  gull odds × (1 − night). Songbird odds × `birds(hour)`: 0 before 04:45, dawn chorus ×2.2 from 05:30 to 07:00, eases to ×1 by 09:00,
+  thins from 16:00, 0 by 19:30. Crickets and dawn birds overlap on purpose between 05:00 and 07:00.
+- **Why:** the user wants no hard day/night switch. O fast-forwards 6 h in 1.5 s, so the bed targets can jump by 1.0
+  per 1/3 s update. The beds' tau of 1.2 s caps the glide at about 0.8 gain/s, which gives no clicks (a node sim in the scratchpad checked this).
+  Don't shorten the bed tau without re-checking.
+- **Where:** `sndDaytime`, `ambience()` in src/audio.js. Falls back to full day when there is no `Clock`/`G.clock` (soundboard).
+- **Status:** active
+
 ## 2026-09-26 · Weapons v2 + gun store sounds
 - **Decision:** `SND_SHOT` maps weapon id → firing sound (shotgun blast + pump, bazooka launch, grenade `throwPin`,
   molotov `throw`). No empty click for thrown weapons. Rockets are a state-driven `rocket` loop per `G.projectiles` item

@@ -23,8 +23,6 @@ const APPS = [
   { id: 'music', label: 'RADIO', icon: 'app_music' },
 ];
 
-const CLOCK = ['12:30', '19:45', '23:50'];
-
 const Phone = {
   init() {
     this.open = false; this.slide = 0;
@@ -162,7 +160,7 @@ const Phone = {
     for (let i = 0; i < s.h; i += 6) ctx.fillRect(X, Y + i, s.w, 1);
     // status bar
     ctx.fillStyle = PAL.K; ctx.fillRect(X, Y, s.w, 11);
-    Font.draw(ctx, CLOCK[G.time], X + 3, Y + 2, { color: PAL.c, outline: null });
+    Font.draw(ctx, Clock.label(), X + 3, Y + 2, { color: PAL.c, outline: null });
     for (let i = 0; i < 4; i++) { ctx.fillStyle = PAL.q; ctx.fillRect(X + s.w - 22 + i * 3, Y + 8 - i * 2, 2, 2 + i * 2); }
     ctx.fillStyle = PAL.h; ctx.fillRect(X + s.w - 8, Y + 3, 5, 5);
     const hoverRow = this.contains(cam, mx, my) ? this.rowAt(my - Y) : -1;
@@ -180,7 +178,7 @@ const Phone = {
           Font.draw(ctx, String(Math.min(9, this.unread)), X + 17, ry + 1, { color: PAL.x, outline: null });
         }
       });
-      Font.draw(ctx, 'O: DAY/NIGHT', X + 4, Y + s.h - 11, { color: PAL.m, outline: null });
+      Font.draw(ctx, 'O: SKIP 6H', X + 4, Y + s.h - 11, { color: PAL.m, outline: null });
     } else if (this.app === 'contacts') {
       CONTACTS.forEach((c, i) => {
         const ry = Y + 14 + i * 22;

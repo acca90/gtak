@@ -4,15 +4,23 @@ A top-down crime game in plain HTML5 canvas + JavaScript, inspired by GTA 1 and 
 softer "modern retro" pixel-art look. All art is generated as editable Aseprite files.
 README.md is the player/developer guide; this file and `.claude/` are how to work on it.
 
+## Backlog
+
+`docs/backlog.md` lists the user's planned features. Take them one at a time: design, split into
+small tasks, spec, build. Keep its status column current.
+
 ## Running
 
 - Open `index.html` directly (it works from `file://`). `gallery.html` shows every sprite.
-- `node tools/check.js` runs the smoke check, and `tools/shot.sh out.png 'demo&...'` takes a headless screenshot.
+- `node tools/check.js` runs the smoke check, `node tools/bench.js` times the update loop, and `tools/shot.sh out.png 'demo&...'` takes a headless screenshot.
 
 ## Code map
 
 ```
 src/core.js      math, RNG, sprite atlas, bitmap font, keyboard/mouse/gamepad input (KEYMAP)
+src/clock.js     in-game clock, day counter, light curve (Clock.light / advance)
+src/traffic.js   traffic driver AI (vehicles-agent): lanes, lights, honk/pass/flee
+src/aov.js       area of view: streaming pools, used-car release, sleep ring (traffic/peds/police use it)
 src/city.js      city generator: road segments, block merges, regions, river, railway
 src/render.js    chunked ground, oblique buildings, roofs, tall props, lighting
 src/entities.js  vehicle models (MODELS), weapons (WEAPONS), car physics, player, particles

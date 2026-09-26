@@ -1,6 +1,42 @@
 # geo-agent — decision log
 Format and rules: `.claude/rules/decisions.md`. Newest first.
 
+## 2026-09-26 · Traffic lane graph: contract and lane offsets
+- **Decision:** `City.buildLanes` (last step of `build`, no RNG) fills `c.lanes` / `c.nodes`
+  with the B1 contract of docs/specs/traffic-v1.md: lanes `{ id, x0, y0, x1, y1, dx, dy, len,
+  zone, profile, from, to, stop, axis, off, street, yield, xings? }`, nodes `{ id, x, y, kind
+  'int'|'turn', signal, arms, profile, exits: [{ from, to, turn, path }], loop? }`.
+  Right-hand traffic (southbound lanes on the west half, eastbound on the south half, which
+  matches the avenue stop lines in `resolveFrames`). One edge per straight run between boxes
+  (collinear runs chained: Route 1 + bridge). Offsets from the centre line: avenue 20, street 17,
+  rough 20, dirt 16, court 16, highway 44 (outer of the 2 painted lanes; the art has 2 per side,
+  not 3). Dead ends and cul-de-sacs get a 'turn' node with a loop (counter-clockwise on
+  screen) on the edge's centre line: 56 px (band half-width 72, or bulb r 80 minus the 8-px
+  stem/bulb misalignment and a 28-px car); smaller loops made cars run wide (2026-09-26 fix). Signal = avenue box, 3+ arms, lights still standing. `stop` = front-bumper point:
+  3 tiles before the box on avenue grid runs (the painted line), else 4 px; null at <3 arms.
+  `yield` everywhere at unsignalised 3+ arm nodes except the two arms of a through road that
+  outranks the rest. Lanes stop at box edges; exits carry the path through the box.
+  Index: 128-px cells; `laneAt(x, y, r=24, dx, dy)`, `lanesIn(rect)`, `drawLanes(ctx, rect)`.
+  Street curb spots moved to across 1.5/7.5 (on the verge), rough to 1/8 (gravel shoulder,
+  4 px clear of a 32-wide heavy in the lane), so parked cars leave the lanes clear; `curbSpot` accepts VERGE. geo-report `--check` verifies
+  the graph.
+- **Why:** task B1 (traffic unlocked by the user 2026-09-26); vehicles-agent and the coordinator
+  build against the contract, so don't rename fields.
+- **Where:** `buildLanes`, `laneAt`, `lanesIn`, `drawLanes` in src/city.js; `ZONES[z].traffic`.
+- **Status:** active
+
+## 2026-09-26 · Far fewer parked cars: ~130 at start, a share per district and spot kind
+- **Decision:** `c.parked` is thinned after naming (it needs `placeAt`) to ~130 (129 on the game
+  seed; was 392). Always kept: police, ambulance and PCTV van spots, helicopters. The rest keep
+  `round(n * rate)` per district and spot kind, min 1: curb 0.08, driveway 0.1, stall 0.2,
+  yard 0.3, fixed-model spots (farms, depots, airport, taxi ranks) 0.3; x1.25 if most of the group
+  is within 900 px of the spawn; picks spaced >= 96 px first. `parkSpots`/`stalls` are unchanged
+  (AOV refills and missions use them as candidates).
+- **Why:** the user (2026-09-26) asked to highly reduce parked cars; traffic (spec traffic-v1
+  phase B) fills the streets instead. Task A4.
+- **Where:** block after `mark('names')` in `City.build`, `KEEP` table.
+- **Status:** active. Supersedes the "at most about 380 parked cars" part of "Build budget".
+
 ## 2026-09-26 · No spawn spot on water or in a wall
 - **Decision:** after placement, `parked`, `stalls`, `parkSpots`, `roadSpots`, `crateSpots` and ground
   `heliSpots` are filtered to dry, non-building tiles (roof helipads excepted), and
@@ -74,9 +110,7 @@ Format and rules: `.claude/rules/decisions.md`. Newest first.
 ## 2026-09-25 · Build budget and prop counts
 - **Decision:** `City.build` stays around 1 s in node, with a 1.5 s target. The noise is a seeded
   256x256 lattice (hashing per sample was about 5x slower), sampled only where it can change the
-  result (the coast band, the desert corner). Keep about 8k trees, 2.5k props and at most about
-  380 parked cars at start (all of them near the spawn, plus police and ambulances, plus a random
-  share of the rest).
+  result (the coast band, the desert corner). Keep about 8k trees, 2.5k props (the parked-car count is now set by "Far fewer parked cars").
 - **Why:** car-vs-car collisions are O(n²) and game.js loops over all props every frame.
 - **Status:** active
 

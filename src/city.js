@@ -59,6 +59,20 @@ const ZONES = {
   airport: { id: 'airport', lit: 0.5, park: 0.3,
     models: { taxi: 16, sedan: 10, van: 10, suv: 6, hatch: 6, truck: 3 } },
 };
+// Traffic per zone (spec docs/specs/traffic-v1.md B.2): density = cars alive per 100 road
+// tiles inside the AOV, models = the mix (weights). Lanes carry their zone (City.buildLanes).
+{
+  const TRAFFIC = {
+    downtown: [3.0, { sedan: 20, taxi: 18, hatch: 12, suv: 10, bus: 8, van: 6, sport: 4, muscle: 3, ambulance: 3, truck: 2 }],
+    suburbs: [0.5, { hatch: 25, sedan: 25, suv: 20, pickup: 8, muscle: 4, sport: 3 }],
+    industrial: [1.2, { truck: 16, semi: 12, flatbed: 8, tanker: 6, mixer: 6, garbage: 5, van: 6, pickup: 5 }],
+    rural: [0.4, { pickup: 14, tractor: 12, truck: 8, flatbed: 6, harvester: 3, suv: 4, hatch: 3, sedan: 3 }],
+    highway: [1.2, { sedan: 14, suv: 10, hatch: 8, truck: 8, semi: 6, tanker: 3, bus: 2, sport: 5, muscle: 4, van: 5 }],
+    airport: [1.5, { taxi: 16, sedan: 10, van: 10, bus: 4, suv: 6 }],
+    wild: [0.3, { pickup: 12, suv: 12, hatch: 5, sedan: 5, van: 3 }],
+  };
+  for (const z in TRAFFIC) ZONES[z].traffic = { density: TRAFFIC[z][0], models: TRAFFIC[z][1] };
+}
 const ZONE_LIST = Object.values(ZONES);
 const REGIONS = ZONE_LIST;                        // legacy name: the vehicle-mix table
 const PROFILE_ZONE = { avenue: 'downtown', street: 'suburbs', court: 'suburbs', rough: 'industrial', dirt: 'rural', highway: 'highway' };
@@ -1211,7 +1225,7 @@ const City = {
           for (let y = Math.floor(bulb.y - r - 1); y <= bulb.y + r + 1; y++) for (let x = Math.floor(bulb.x - r - 1); x <= bulb.x + r + 1; x++) {
             if (dist(x + 0.5, y + 0.5, bulb.x, bulb.y) <= r) { c.kind[I(x, y)] = KIND.ROAD; c.sub[I(x, y)] = 9; streetMap[I(x, y)] = sid + 1; }
           }
-          c.paints.push({ t: 'culdesac', stem, bulb, r });
+          c.paints.push({ t: 'culdesac', stem, bulb, r, side, street: sid });
           c.trees.push({ x: T(bulb.x), y: T(bulb.y), sprite: 'tree_a' }); addObstacle(T(bulb.x), T(bulb.y), 14);
           const vert = side === 's' || side === 'n';
           for (let k = 4; k < (vert ? stem.h : stem.w) - 4; k += 6) c.roadSpots.push(vert ? { x: T(cx), y: T(stem.y + k) } : { x: T(stem.x + k), y: T(cy) });
@@ -1677,7 +1691,7 @@ const City = {
     const kAtPx = (x, y) => kindAt(Math.floor(x / TILE), Math.floor(y / TILE));
     const lamp = (x, y) => { if (kAtPx(x, y) === KIND.WALK) c.lamps.push({ x, y }); };
     const curbProp = (sprite, x, y, r = 2, extra) => { if (kAtPx(x, y) === KIND.WALK) addProp(sprite, x, y, r, extra); };
-    const curbSpot = (s) => { if (kAtPx(s.x, s.y) === KIND.ROAD) { c.parkSpots.push(s); park(s, ZONES[PROFILE_ZONE[s.profile]].park); } delete s.profile; };
+    const curbSpot = (s) => { const k = kAtPx(s.x, s.y); if (k === KIND.ROAD || k === KIND.VERGE) { c.parkSpots.push(s); park(s, ZONES[PROFILE_ZONE[s.profile]].park); } delete s.profile; };
     for (const rec of net.recs) {
       if (rec.axis === 'x') continue;
       const vert = rec.axis === 'v', p = rec.profile, len = rec.len;
@@ -1723,7 +1737,8 @@ const City = {
             if (R() < 0.75 && kAtPx(x, y) === KIND.VERGE) addTree(x, y, 'tree_a');
           }
           for (const l of [6, 14]) {
-            const [x, y] = P(side < 0 ? 2.75 : 6.25, l);
+            // on the grass verge, clear of the traffic lane (lanes at 17 px off the centre line)
+            const [x, y] = P(side < 0 ? 1.5 : 7.5, l);
             curbSpot({ x, y, ang: vert ? (side < 0 ? Math.PI : 0) : (side < 0 ? -Math.PI / 2 : Math.PI / 2), profile: p });
           }
           lamp(...curb(side, 7, 4));
@@ -1732,7 +1747,7 @@ const City = {
       } else if (p === 'rough' && grid) {
         for (const side of [-1, 1]) {
           for (const l of [5, 14]) {
-            const [x, y] = P(side < 0 ? 1.5 : 7.5, l);
+            const [x, y] = P(side < 0 ? 1 : 8, l);           // on the gravel shoulder, clear of the lane (heavies too)
             curbSpot({ x, y, ang: vert ? (side < 0 ? Math.PI : 0) : (side < 0 ? -Math.PI / 2 : Math.PI / 2), profile: p });
           }
           lamp(...curb(side, 10, 4));
@@ -1827,12 +1842,8 @@ const City = {
       c.stalls = c.stalls.filter(clearOf);
       c.parkSpots = c.parkSpots.filter(clearOf);
       c.heliSpots = offWater;
-      const near = (s) => dist(s.x, s.y, c.spawn.x, c.spawn.y) < 1400;
       c.parked = c.parked.filter((s) => dist(s.x, s.y, c.starterCar.x, c.starterCar.y) > 70 && dist(s.x, s.y, c.tankSpot.x, c.tankSpot.y) > 70);
-      const close = c.parked.filter(near), far = shuffle(c.parked.filter((s) => !near(s)));
-      const keepFar = Math.max(0, 380 - close.length);
-      const special = far.filter((s) => s.models && (s.models.includes('ambulance') || s.models.includes('police')));
-      c.parked = close.concat(special, far.filter((s) => !special.includes(s)).slice(0, keepFar), c.heliSpots);
+      c.parked = c.parked.concat(c.heliSpots);
     }
     // nothing that spawns a car or a crate may sit in the water or in a wall (roof helipads excepted)
     {
@@ -1849,6 +1860,36 @@ const City = {
     this.nameAreas(c, { G, GRIDS, AIRPORT, BEACH, MARINA, PORT, LAKES, ISLANDS, isSea, land, zone, streetMap, net, place });
 
     mark('names');
+    // parked cars, thinned per district (needs the address maps)
+    {
+      // Far fewer parked cars (traffic fills the streets instead): ~130 in all. Landmark cars
+      // (police, ambulances, PCTV vans) always stay; the rest keep a share per district and
+      // kind of spot, at least one where there were any, spaced out so nothing clumps.
+      // Street bays and driveways keep the least, lots, yards and farm machines more.
+      const KEEP = { curb: 0.08, driveway: 0.1, stall: 0.2, yard: 0.3, fixed: 0.3 };
+      const kindOf = (s) => (s.stall ? 'stall' : s.driveway ? 'driveway' : s.yard ? 'yard' : s.models ? 'fixed' : 'curb');
+      const always = (s) => s.models && (s.models.includes('ambulance') || s.models.includes('police') || s.models[0] === 'van' && s.stall && s.models.length === 1);
+      const groups = new Map();
+      const heli = (s) => s.models && s.models[0] === 'helicopter';
+      const kept = c.parked.filter((s) => always(s) && !heli(s));
+      for (const s of c.parked) {
+        if (always(s) || heli(s)) continue;
+        const key = this.placeAt(s.x, s.y).district + '|' + kindOf(s);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(s);
+      }
+      for (const [key, list] of groups) {
+        const nearSpawn = list.filter((s) => dist(s.x, s.y, c.spawn.x, c.spawn.y) < 900).length > list.length / 2;
+        const n = Math.max(1, Math.round(list.length * KEEP[key.split('|')[1]] * (nearSpawn ? 1.25 : 1)));
+        const pool = shuffle(list.slice()), pick = [];
+        for (const gap of [96, 0]) for (const s of pool) {
+          if (pick.length >= n) break;
+          if (!pick.includes(s) && !pick.some((q) => dist(s.x, s.y, q.x, q.y) < gap)) pick.push(s);
+        }
+        kept.push(...pick);
+      }
+      c.parked = kept.concat(c.parked.filter((s) => s.models && s.models[0] === 'helicopter'));
+    }
     // extra camera spots for screenshots
     c.places['Bridge Tower'] = { x: T(TOWERS[0]) + 8, y: T(BRIDGE_Y + ROAD) + 40 };
     c.places['Gate Bridge South'] = { x: T(TOWERS[0] + 14), y: T(BRIDGE_Y + 17) };
@@ -1860,7 +1901,305 @@ const City = {
     c.places['Hospital Helipad'] = { x: c.hospitalPad.x, y: c.hospitalPad.y + 40 };
     this.resolveFrames(c, R);
     mark('frames');
+    this.buildLanes(c);
+    mark('lanes');
     return c;
+  },
+
+  // ================================================================ LANES ==
+  // Traffic lane graph (spec docs/specs/traffic-v1.md B1), right-hand traffic.
+  //   c.lanes: { id, x0, y0, x1, y1, dx, dy, len, zone, profile, from, to, stop, axis, off,
+  //              street, yield, xings? }  one per travel direction per road edge; (x0,y0) ->
+  //              (x1,y1) is the lane centreline in px, in the direction of travel. `stop` is
+  //              where the car's front bumper stops (the avenue stop line, else 4 px before the
+  //              box), null where nothing conflicts. `yield`: give way at an unsignalised node.
+  //   c.nodes: { id, x, y, kind: 'int' | 'turn', signal, arms, profile, exits: [{ from, to,
+  //              turn: 's'|'l'|'r'|'u', path: [[x, y], ...] }] }; a signalised node obeys
+  //              Render.signalFrame(lane.axis). 'turn' = a U-turn loop (dead end, cul-de-sac).
+  // Road edges are the straight runs between intersection boxes (collinear runs such as
+  // Route 1 + Pastel Gate Bridge are one edge); cul-de-sac stems are edges too.
+  buildLanes(c) {
+    const n = this.net, W = n.W, H = n.H, ROAD = CITY.ROAD, HALF = ROAD * TILE / 2;
+    const T = (t) => t * TILE;
+    // lane centre offset from the centre line (px), per profile: the driving lane, clear of
+    // the avenue parking bays (tiles 0-1, 7-8), the street and rough curb spots, and on the
+    // highway the outer (right) lane of the two painted each way (inner lane: 16 px)
+    const OFF = { avenue: 20, highway: 44, rough: 20, street: 17, dirt: 16, court: 16 };
+    // U-turn loop radius (px): as wide as the band (dead ends) or the bulb (courts) allows
+    // with a 28-px car inside it; centred on the edge's centre line so the lane runs into it
+    const LOOP = 56;
+    const r1 = (v) => Math.round(v * 10) / 10;
+    const nodes = [], lanes = [], edges = [];
+    const addNode = (x, y, kind, extra) => {
+      const nd = Object.assign({ id: nodes.length, x: r1(x), y: r1(y), kind, signal: false, arms: 0, profile: null, exits: [] }, extra);
+      nd._arms = [];
+      nodes.push(nd);
+      return nd;
+    };
+    const inN = (x, y) => x >= 0 && y >= 0 && x < W && y < H;
+    const boxAt = (x, y) => (inN(x, y) ? n.box[y * W + x] : 0);
+    const runAt = (axis, x, y) => (inN(x, y) && !n.box[y * W + x] ? (axis === 'v' ? n.v : n.h)[y * W + x] : 0);
+    const boxNodes = new Map();
+    const nodeOfBox = (id) => {
+      let nd = boxNodes.get(id);
+      if (!nd) {
+        const B = n.recs[id - 1];
+        nd = addNode(T(B.x) + HALF, T(B.y) + HALF, 'int', { profile: B.profile, box: { x: B.x, y: B.y } });
+        boxNodes.set(id, nd);
+      }
+      return nd;
+    };
+    const before = (r) => (r.axis === 'v' ? [r.x + 4, r.y - 1] : [r.x - 1, r.y + 4]);
+    const after = (r) => (r.axis === 'v' ? [r.x + 4, r.y + r.len] : [r.x + r.len, r.y + 4]);
+    const zoneOf = (street, profile) => {
+      const s = c.streets[street];
+      return s && /^Airport /.test(s.name) ? 'airport' : PROFILE_ZONE[profile];
+    };
+
+    // ---- edges: chains of collinear runs between boxes
+    n.recs.forEach((r) => {
+      if (r.axis === 'x' || runAt(r.axis, ...before(r))) return;          // only chain heads
+      const chain = [r];
+      let last = r, nx;
+      while ((nx = runAt(r.axis, ...after(last)))) { last = n.recs[nx - 1]; chain.push(last); }
+      const vert = r.axis === 'v';
+      const b0 = boxAt(...before(r)), b1 = boxAt(...after(last));
+      edges.push({
+        axis: r.axis, c: T(vert ? r.x : r.y) + HALF, a0: T(vert ? r.y : r.x), a1: T(vert ? last.y + last.len : last.x + last.len),
+        profile: r.profile, street: r.street, stopLine: chain.length === 1 && !!r.grid && r.len === CITY.LOT && r.profile === 'avenue',
+        n0: b0 ? nodeOfBox(b0) : null, n1: b1 ? nodeOfBox(b1) : null, recs: chain,
+      });
+    });
+    // ---- cul-de-sac stems: from a box side to a loop around the bulb's tree
+    for (const p of c.paints) {
+      if (p.t !== 'culdesac' || !p.side) continue;
+      const s = p.stem, vert = p.side === 'n' || p.side === 's';
+      const out = { s: [s.x + 2, s.y + s.h], n: [s.x + 2, s.y - 1], e: [s.x + s.w, s.y + 2], w: [s.x - 1, s.y + 2] }[p.side];
+      const b = boxAt(...out);
+      if (!b) continue;
+      // on the stem's centre line (the bulb can sit half a tile off it), level with the bulb
+      const sc = T(vert ? s.x + 2 : s.y + 2), lat = Math.abs(sc - T(vert ? p.bulb.x : p.bulb.y));
+      const loop = Math.min(64, T(p.r) - 16 - lat);
+      const turn = addNode(vert ? sc : T(p.bulb.x), vert ? T(p.bulb.y) : sc, 'turn', { profile: 'court', loop });
+      const box = nodeOfBox(b), toward = p.side === 's' || p.side === 'e';     // the box is at the high end
+      const aBox = T(vert ? (toward ? s.y + s.h : s.y) : (toward ? s.x + s.w : s.x));
+      const aBulb = T(vert ? p.bulb.y : p.bulb.x);
+      edges.push({
+        axis: vert ? 'v' : 'h', c: T(vert ? s.x + 2 : s.y + 2), a0: toward ? aBulb : aBox, a1: toward ? aBox : aBulb,
+        profile: 'court', street: p.street,
+        n0: toward ? turn : box, n1: toward ? box : turn, t0: toward ? turn : null, t1: toward ? null : turn, recs: [],
+      });
+    }
+    // ---- dead ends: a U-turn loop inside the band, near its end
+    for (const e of edges) {
+      const vert = e.axis === 'v';
+      if (!e.n0) { const a = e.a0 + LOOP + 16; e.n0 = e.t0 = addNode(vert ? e.c : a, vert ? a : e.c, 'turn', { profile: e.profile, loop: LOOP }); }
+      if (!e.n1) { const a = e.a1 - LOOP - 16; e.n1 = e.t1 = addNode(vert ? e.c : a, vert ? a : e.c, 'turn', { profile: e.profile, loop: LOOP }); }
+    }
+
+    // ---- lanes, two per edge
+    for (const e of edges) {
+      const off = OFF[e.profile], vert = e.axis === 'v';
+      const reach = (t) => Math.sqrt(t.loop * t.loop - off * off);
+      const s0 = e.t0 ? (vert ? e.t0.y : e.t0.x) + reach(e.t0) : e.a0;
+      const s1 = e.t1 ? (vert ? e.t1.y : e.t1.x) - reach(e.t1) : e.a1;
+      const zone = zoneOf(e.street, e.profile);
+      // level crossings on this edge (the railway is vertical, so only 'h' runs cross it)
+      const xs = [];
+      if (!vert) {
+        const ty = Math.floor(e.c / TILE);
+        let prev = false;
+        for (let tx = Math.floor(s0 / TILE); tx < Math.ceil(s1 / TILE); tx++) {
+          const on = inN(tx, ty) && n.rail[ty * W + tx] > 0;
+          if (on && !prev) xs.push(T(tx) + 2 * TILE);
+          prev = on;
+        }
+      }
+      const pair = [];
+      for (const dir of [1, -1]) {
+        const dx = vert ? 0 : dir, dy = vert ? dir : 0;
+        const ac = e.c + (vert ? -dy : dx) * off;        // right-hand side of the travel direction
+        const a = dir > 0 ? s0 : s1, b = dir > 0 ? s1 : s0;
+        const P = (t) => (vert ? [r1(ac), r1(t)] : [r1(t), r1(ac)]);
+        const [x0, y0] = P(a), [x1, y1] = P(b);
+        const from = dir > 0 ? e.n0 : e.n1, to = dir > 0 ? e.n1 : e.n0;
+        const L = { id: lanes.length, x0, y0, x1, y1, dx, dy, len: Math.abs(b - a), zone, profile: e.profile, from: from.id, to: to.id,
+          stop: null, axis: e.axis, off, street: e.street, yield: false };
+        if (xs.length) L.xings = xs.map((t) => ({ x: vert ? r1(ac) : t, y: vert ? t : r1(ac) }));
+        L._e = e;
+        lanes.push(L);
+        pair.push(L);
+      }
+      const [F, B] = pair;
+      e.n0._arms.push({ in: B, out: F, e });
+      e.n1._arms.push({ in: F, out: B, e });
+    }
+
+    // ---- signals: avenue boxes with 3+ arms that kept their traffic lights
+    const lit = new Set();
+    for (const s of c.trafficLights) {
+      for (const [ox, oy] of [[8, 8], [-8, -8], [8, -8], [-8, 8]]) {
+        const b = boxAt(Math.floor((s.x + ox) / TILE), Math.floor((s.y + oy) / TILE));
+        if (b) lit.add(b);
+      }
+    }
+    for (const [id, nd] of boxNodes) nd.signal = lit.has(id) && nd.profile === 'avenue' && nd._arms.length >= 3;
+
+    // ---- exits
+    const loopPath = (nd, L, M) => {
+      // around the node counter-clockwise on screen (right-hand traffic keeps the centre on its left)
+      const R = nd.loop || LOOP;
+      const rx = -L.dy, ry = L.dx, q = Math.sqrt(Math.max(0, R * R - L.off * L.off));
+      const ang = (x, y) => Math.atan2(y - nd.y, x - nd.x);
+      const tIn = ang(nd.x + rx * L.off - L.dx * q, nd.y + ry * L.off - L.dy * q);
+      let tOut = ang(nd.x - rx * M.off - L.dx * q, nd.y - ry * M.off - L.dy * q);
+      while (tOut >= tIn) tOut -= Math.PI * 2;
+      const pts = [[L.x1, L.y1]];
+      const steps = Math.max(4, Math.ceil((tIn - tOut) / 0.4));
+      for (let k = 0; k <= steps; k++) {
+        const t = tIn + (tOut - tIn) * (k / steps);
+        pts.push([r1(nd.x + Math.cos(t) * R), r1(nd.y + Math.sin(t) * R)]);
+      }
+      pts.push([M.x0, M.y0]);
+      return pts.filter((p, k) => k === 0 || Math.hypot(p[0] - pts[k - 1][0], p[1] - pts[k - 1][1]) > 0.5);
+    };
+    const curve = (L, M) => {
+      const P0 = [L.x1, L.y1], P3 = [M.x0, M.y0];
+      if (L.dx * M.dx + L.dy * M.dy > 0.5) return [P0, P3];               // straight on
+      const Q = L.dx === 0 ? [P0[0], P3[1]] : [P3[0], P0[1]];             // where the two lane lines meet
+      const pts = [];
+      for (let k = 0; k <= 6; k++) {
+        const t = k / 6, u = 1 - t;
+        pts.push([r1(u * u * P0[0] + 2 * u * t * Q[0] + t * t * P3[0]), r1(u * u * P0[1] + 2 * u * t * Q[1] + t * t * P3[1])]);
+      }
+      return pts;
+    };
+    for (const nd of nodes) {
+      const A = nd._arms;
+      nd.arms = A.length;
+      if (A.length === 1) {
+        nd.kind = 'turn';
+        if (!nd.loop) nd.loop = LOOP;
+        nd.exits.push({ from: A[0].in.id, to: A[0].out.id, turn: 'u', path: loopPath(nd, A[0].in, A[0].out) });
+        continue;
+      }
+      for (const a of A) for (const b of A) {
+        if (a === b) continue;
+        const L = a.in, M = b.out, dot = L.dx * M.dx + L.dy * M.dy;
+        if (dot < -0.5) continue;                     // never into a lane coming back at us
+        const turn = dot > 0.5 ? 's' : L.dx * M.dy - L.dy * M.dx > 0 ? 'r' : 'l';
+        nd.exits.push({ from: L.id, to: M.id, turn, path: curve(L, M) });
+      }
+      // stop points and right of way (only where traffic can cross: 3+ arms)
+      if (A.length < 3) continue;
+      const ranks = A.map((a) => RANK[a.e.profile]);
+      const top = Math.max(...ranks), nTop = ranks.filter((r) => r === top).length;
+      for (const a of A) {
+        const L = a.in;
+        const back = a.e.stopLine ? 3 * TILE : 4;
+        L.stop = { x: r1(L.x1 - L.dx * back), y: r1(L.y1 - L.dy * back) };
+        L.yield = !nd.signal && !(nTop === 2 && nTop < A.length && RANK[a.e.profile] === top);
+      }
+    }
+    for (const nd of nodes) delete nd._arms;
+    for (const L of lanes) delete L._e;
+    c.lanes = lanes;
+    c.nodes = nodes;
+
+    // ---- spatial index: 128-px cells, each lists the lanes within 24 px of it
+    const CS = 128, gx = Math.ceil((W * TILE) / CS), gy = Math.ceil((H * TILE) / CS);
+    const cells = new Array(gx * gy);
+    for (const L of lanes) {
+      const m = 24;
+      const cx0 = clamp(Math.floor((Math.min(L.x0, L.x1) - m) / CS), 0, gx - 1), cx1 = clamp(Math.floor((Math.max(L.x0, L.x1) + m) / CS), 0, gx - 1);
+      const cy0 = clamp(Math.floor((Math.min(L.y0, L.y1) - m) / CS), 0, gy - 1), cy1 = clamp(Math.floor((Math.max(L.y0, L.y1) + m) / CS), 0, gy - 1);
+      for (let y = cy0; y <= cy1; y++) for (let x = cx0; x <= cx1; x++) (cells[y * gx + x] || (cells[y * gx + x] = [])).push(L);
+    }
+    this.laneIndex = { CS, gx, gy, cells, seen: new Uint32Array(lanes.length), tick: 0, lanes, nodes };
+  },
+
+  // Distance (px) from (x, y) to lane L's centreline segment.
+  laneDist(L, x, y) {
+    const vx = L.x1 - L.x0, vy = L.y1 - L.y0, l2 = vx * vx + vy * vy;
+    const t = l2 ? clamp(((x - L.x0) * vx + (y - L.y0) * vy) / l2, 0, 1) : 0;
+    return Math.hypot(x - (L.x0 + vx * t), y - (L.y0 + vy * t));
+  },
+
+  // The nearest lane within r px (default 24) of a world point, or null. With (dx, dy) set,
+  // only lanes heading that way (dot >= 0) count.
+  laneAt(x, y, r = 24, dx = 0, dy = 0) {
+    const X = this.laneIndex;
+    if (!X) return null;
+    const cx = Math.floor(x / X.CS), cy = Math.floor(y / X.CS);
+    if (cx < 0 || cy < 0 || cx >= X.gx || cy >= X.gy) return null;
+    const list = X.cells[cy * X.gx + cx];
+    if (!list) return null;
+    let best = null, bd = r;
+    for (const L of list) {
+      if ((dx || dy) && L.dx * dx + L.dy * dy < 0) continue;
+      const d = this.laneDist(L, x, y);
+      if (d <= bd) { bd = d; best = L; }
+    }
+    return best;
+  },
+
+  // Every lane that passes within 24 px of the rect (px); `out` is reused if given.
+  lanesIn(x0, y0, x1, y1, out = []) {
+    const X = this.laneIndex;
+    out.length = 0;
+    if (!X) return out;
+    const tick = ++X.tick;
+    if (tick > 0xfffffff0) { X.seen.fill(0); X.tick = 1; }
+    const a = clamp(Math.floor(x0 / X.CS), 0, X.gx - 1), b = clamp(Math.floor(x1 / X.CS), 0, X.gx - 1);
+    const cy0 = clamp(Math.floor(y0 / X.CS), 0, X.gy - 1), cy1 = clamp(Math.floor(y1 / X.CS), 0, X.gy - 1);
+    for (let cy = cy0; cy <= cy1; cy++) for (let cx = a; cx <= b; cx++) {
+      const list = X.cells[cy * X.gx + cx];
+      if (list) for (const L of list) if (X.seen[L.id] !== X.tick) { X.seen[L.id] = X.tick; out.push(L); }
+    }
+    return out;
+  },
+
+  // Debug overlay (for #demo&lanes): draws lanes, stop points, nodes and their exit paths
+  // inside the world rect, in WORLD coordinates: set the canvas transform first
+  // (ctx.translate(-cam.x, -cam.y) with the zoom applied), then call it.
+  drawLanes(ctx, x0, y0, x1, y1, px = 1) {
+    const X = this.laneIndex;
+    if (!X) return;
+    const ZC = { downtown: '#ff5ca8', suburbs: '#6fd36f', industrial: '#ffb347', rural: '#d8c36a', highway: '#5ab4ff', airport: '#c792ff', wild: '#aaaaaa' };
+    const TC = { s: 'rgba(255,255,255,0.5)', r: 'rgba(120,255,160,0.7)', l: 'rgba(255,170,90,0.7)', u: 'rgba(255,90,255,0.8)' };
+    ctx.save();
+    const lanes = this.lanesIn(x0, y0, x1, y1);
+    const seen = new Set();
+    for (const L of lanes) {
+      ctx.strokeStyle = ZC[L.zone] || '#fff'; ctx.lineWidth = 2 * px;
+      ctx.beginPath(); ctx.moveTo(L.x0, L.y0); ctx.lineTo(L.x1, L.y1); ctx.stroke();
+      // chevrons every 64 px show the direction of travel
+      ctx.beginPath();
+      for (let d = 32; d < L.len; d += 64) {
+        const x = L.x0 + L.dx * d, y = L.y0 + L.dy * d, rx = -L.dy, ry = L.dx;
+        ctx.moveTo(x - L.dx * 6 + rx * 5, y - L.dy * 6 + ry * 5); ctx.lineTo(x, y); ctx.lineTo(x - L.dx * 6 - rx * 5, y - L.dy * 6 - ry * 5);
+      }
+      ctx.stroke();
+      if (L.stop) {
+        ctx.strokeStyle = L.yield ? '#ffe45c' : '#ff3b3b'; ctx.lineWidth = 3 * px;
+        const rx = -L.dy * 10, ry = L.dx * 10;
+        ctx.beginPath(); ctx.moveTo(L.stop.x - rx, L.stop.y - ry); ctx.lineTo(L.stop.x + rx, L.stop.y + ry); ctx.stroke();
+      }
+      for (const id of [L.from, L.to]) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const nd = X.nodes[id];
+        for (const ex of nd.exits) {
+          ctx.strokeStyle = TC[ex.turn]; ctx.lineWidth = 1 * px;
+          ctx.beginPath(); ctx.moveTo(ex.path[0][0], ex.path[0][1]);
+          for (const p of ex.path) ctx.lineTo(p[0], p[1]);
+          ctx.stroke();
+        }
+        ctx.fillStyle = nd.kind === 'turn' ? '#ff5aff' : nd.signal ? '#3bff6a' : '#ffffff';
+        ctx.fillRect(nd.x - 5 * px, nd.y - 5 * px, 10 * px, 10 * px);
+      }
+    }
+    ctx.restore();
   },
 
   // Districts, neighbourhoods, the per-tile address maps and the #demo goto places.

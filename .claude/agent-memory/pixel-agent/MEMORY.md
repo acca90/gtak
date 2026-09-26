@@ -1,6 +1,35 @@
 # pixel-agent — decision log
 Format and rules: `.claude/rules/decisions.md`. Newest first.
 
+## 2026-09-26 · Tank look = M1 Abrams in desert sand (mid tone `S`, not `t`)
+- **Decision:** `tank:hull`/`turret` are an Abrams: slab skirts over the tracks (7 panels,
+  track ends show front/rear for the moved frame), a sloped glacis, a driver hatch with 3
+  periscopes, 2 louvred engine grilles plus a rear exhaust grille. The turret is a wide, flat
+  30-px slab with a shallow front chevron and a mantlet slot, a 2-px gun with a bore evacuator,
+  the GPS doghouse front right, a commander's cupola with a .50 cal on the right, the loader's
+  hatch and MG on the left, the CITV, and a bustle rack with olive bags. Colours are sand
+  `T/S/s`, and the hull deck is one step darker than the turret. `sandTone()` shifts `t→S`
+  and `S→s`, because the lighter `t` mid disappeared on the cream spawn paving.
+- **Contract kept:** hull 36×60 centred; turret pivot at cell (24,36); gun tip on row 0
+  (= the 36-px muzzle in `fireCannon`). No footprint change.
+- **Rule:** the new wrecks use `wreckify(im, localRnd(seed))`. `burnOldWreck(2276 / 605)`
+  replays the old tank's `R()` draws, so the sheets after `tank` regenerate byte-identical
+  (verified with a full forced run into a scratch root).
+- **Status:** active
+
+## 2026-09-26 · Day cycle: DUSK ambient `#f0b096`, LOOK_KEYS shaped by eye (time-v1 T4)
+- **Decision:** `TIMES[1].ambient` warmed from `#e8aaa0` (salmon) to `#f0b096` (peach-rose) so
+  golden afternoon and sunset read warm, not pink-grey. NIGHT unchanged (`#2f3572`). `LOOK_KEYS`
+  (src/clock.js, the only part of that file I own): full day 08:30-16:00; golden afternoon stays
+  light (17:30 s 0.2, 17:45 about 0.28); sunset s 0.9 at 18:30; 19:00-22:00 spaced evenly
+  (1.2, 1.4, 1.58, 1.82, 2); dawn is 1.75 at 05:15, 1.4 at 06:00, 0.8 at 06:30, day by 08:30.
+- **Why:** multiply-only ambient dims everything, so s above ~0.3 in the afternoon looks grey.
+  The blue end of DUSK to NIGHT darkens fast, so the evening keys are packed tighter near night.
+- **Limit:** with 3 looks, dawn can't be truly lilac. It uses the DUSK to NIGHT blend (s 1.1-1.4
+  reads mauve-rose), then briefly peach. A real lilac dawn or gold needs the §4 `tint` overlay
+  (proposed to the coordinator, not built).
+- **Status:** active
+
 ## 2026-09-26 · `tiles:runway` frame 4 = east edge (frame 3 mirrored); propplane faces up
 - **Decision:** runway frames are 0 plain, 1 centre dash, 2 threshold, 3 west edge (line on the
   tile's left), 4 east edge (line on the right, the exact mirror of 3). Frame 4 is appended, so

@@ -42,6 +42,8 @@ const Game = {
     G.pickups.push({ kind: 'pistol', x: c.spawn.x - 40, y: c.spawn.y - 2, away: 0 });
     Missions.init();
     Phone.init();
+    Clock.init(TITLE_MIN);
+    this.setupTraffic();
     G.cam.cx = c.spawn.x; G.cam.cy = c.spawn.y;
     G.district = null;
     Train.init(c.rail);
@@ -73,7 +75,74 @@ const Game = {
     let model = randomModel(G.R, maxLen, weights);
     if (!this.roomFor(s, MODELS[model].len)) model = randomModel(G.R, 58, weights);
     if (!this.roomFor(s, MODELS[model].len)) return null;
-    return this.spawnCar(model, s);
+    const c = this.spawnCar(model, s);
+    if (c) c.home = s;   // untouched parked car: stays put until the player uses it (AOV)
+    return c;
+  },
+
+  // Traffic pool (spec traffic-v1 §B.2/B3): the budget is the zone densities (cars per 100 road
+  // tiles) summed over the lanes inside the AOV; cars spawn on a lane out of sight, already moving.
+  setupTraffic() {
+    const c = G.city;
+    G.trafficBudget = 0;
+    if (!c.lanes || !c.lanes.length) return;   // no lane graph yet
+    const TRAFFIC_CRUISE = 0.35, HIGHWAY_CRUISE = 0.55;
+    const list = () => G.cars.filter((k) => k.traffic && !k.gone);
+    let near = [], nearAt = -1;
+    AOV.pool('traffic', {
+      get max() { return G.trafficBudget; },
+      list,
+      pick() {
+        if (G.t >= nearAt) { // lanes touching the AOV, and the budget, refreshed every 2 s
+          nearAt = G.t + 2;
+          const r = AOV.aov;
+          near = City.lanesIn(r.x0, r.y0, r.x1, r.y1, []);
+          let budget = 0;
+          for (const l of near) {
+            const Z = ZONES[l.zone], len = Math.hypot(l.x1 - l.x0, l.y1 - l.y0) / TILE / 2;   // two lanes per road
+            if (Z && Z.traffic) budget += (Z.traffic.density * len) / 100;
+          }
+          G.trafficBudget = Math.round(budget);
+        }
+        if (!near.length) return null;
+        // a point on the part of the lane inside the AOV (lanes are axis-aligned, and can be long),
+        // kept away from both ends so cars don't appear inside a junction or at a stop line
+        const l = pick(G.R, near), r = AOV.aov;
+        const lo = (v0, v1, a, b) => { const d = v1 - v0; if (!d) return [0, 1]; const t0 = (a - v0) / d, t1 = (b - v0) / d; return [Math.min(t0, t1), Math.max(t0, t1)]; };
+        const [ax, bx] = lo(l.x0, l.x1, r.x0, r.x1), [ay, by] = lo(l.y0, l.y1, r.y0, r.y1);
+        const m = Math.min(0.45, 70 / Math.max(l.len || 1, 1));
+        const t0 = Math.max(m, ax, ay), t1 = Math.min(1 - m, bx, by);
+        if (t1 <= t0) return null;
+        const t = t0 + G.R() * (t1 - t0);
+        return { lane: l, t, x: l.x0 + (l.x1 - l.x0) * t, y: l.y0 + (l.y1 - l.y0) * t };
+      },
+      spawn(s) {
+        const l = s.lane, Z = ZONES[l.zone];
+        if (!Z || !Z.traffic) return null;
+        if (dist(s.x, s.y, G.player.px, G.player.py) < 200) return null;
+        const model = randomModel(G.R, 999, Z.traffic.models), M = MODELS[model];
+        const v = M.max * (l.profile === 'highway' ? HIGHWAY_CRUISE : TRAFFIC_CRUISE);
+        // room to stop: the lane ahead must be clear for the stopping distance (the driver plans
+        // with 30% of `brake`), and the front bumper must not start inside a stop line's range
+        const need = M.len / 2 + (v * v) / (2 * 0.3 * M.brake) + 20;
+        if (l.stop) {
+          const toStop = (l.stop.x - s.x) * l.dx + (l.stop.y - s.y) * l.dy - M.len / 2;
+          if (toStop > -M.len && toStop < need) return null;
+        }
+        for (const k of G.cars) {
+          const rx = k.x - s.x, ry = k.y - s.y, along = rx * l.dx + ry * l.dy, lat = Math.abs(rx * l.dy - ry * l.dx);
+          if (lat < 26 + k.hw && along > -(M.len + k.len) / 2 - 30 && along < need + k.len / 2) return null;
+        }
+        const car = new Car(model, s.x, s.y, Math.atan2(l.dx, -l.dy));
+        car.vx = l.dx * v; car.vy = l.dy * v;
+        car.traffic = true; car.managed = true;
+        car.driver = { ai: true, lane: l.id, cruise: v };
+        G.cars.push(car);
+        return car;
+      },
+      removable: (k) => AOV.removable(k),
+      remove(k) { k.gone = true; G.cars = G.cars.filter((x) => x !== k); },
+    });
   },
 
   // ----------------------------------------------------------- events --
@@ -189,19 +258,11 @@ const Game = {
   update(dt) {
     G.t += dt;
     Sound.update(dt);
-    if (Input.hit('time')) { G.time = (G.time + 1) % TIMES.length; G.timeFade = null; this.toast(TIMES[G.time].name); }
-    if (Input.hit('daynight')) this.toggleDayNight();
-    if (G.timeFade) {
-      G.timeFade.t -= dt;
-      if (G.timeFade.t <= 0) {
-        G.time = G.timeFade.steps.shift();
-        G.timeFade = G.timeFade.steps.length ? { steps: G.timeFade.steps, t: 0.6 } : null;
-      }
-    }
+    if (Input.hit('daynight') && G.state === 'play') this.skipTime();
     if (G.state === 'title') {
       G.cam.cx += 22 * dt; G.cam.cy += 9 * dt;
       if (Input.hit('start') || Input.hit('click')) {
-        G.state = 'play'; G.time = 0; G.timeFade = null;
+        G.state = 'play'; Clock.init();
         Sound.ui('start');
         this.toast('WAIT FOR A CALL, OR FIND A RINGING PAYPHONE', 4);
       }
@@ -214,6 +275,7 @@ const Game = {
     if (Input.hit('pause')) G.paused = !G.paused;
     if (Input.hit('map')) G.showMap = !G.showMap;
     if (G.paused) return;
+    Clock.update(dt);
 
     // cellphone: right click toggles, left clicks on the handset are eaten by it
     if (Input.hit('phone') && !G.player.dead) Phone.toggle();
@@ -235,12 +297,36 @@ const Game = {
     else this.updateOnFoot(dt, p);
     if (!p.dead && !p.car) Shop.check(p);
 
-    for (const c of G.cars) c.update(dt, c.driver === p ? this.carControls() : null);
-    for (let i = 0; i < G.cars.length; i++) {
-      const a = G.cars[i];
-      for (let j = i + 1; j < G.cars.length; j++) Physics.carVsCar(a, G.cars[j]);
-    }
+    // cars far outside the AOV that nobody drives and that aren't moving sleep (no update, no collisions)
+    // (wrecks stay awake so their burn-out timer runs and the AOV can clear them)
+    const awake = [];
     for (const c of G.cars) {
+      c.asleep = !c.driver && !c.wreck && !c.m.air && c.speed() < 0.5 && !AOV.inKeep(c.x, c.y);
+      if (c.asleep) continue;
+      awake.push(c);
+      c.update(dt, c.driver === p ? this.carControls() : c.driver && c.driver.ai ? Traffic.controls(c, dt) : null);
+    }
+    // car vs car through a spatial grid (160 px cells cover the longest reach between two cars);
+    // sleeping cars are in the grid so moving cars still hit them, but two sleepers are never tested
+    const cell = 160, grid = new Map();
+    const test = (a, b) => { if (a.asleep && b.asleep) return; Physics.carVsCar(a, b); pairs++; };
+    let pairs = 0;
+    for (const c of G.cars) {
+      const k = Math.floor(c.x / cell) * 8192 + Math.floor(c.y / cell);
+      const b = grid.get(k);
+      if (b) b.push(c); else grid.set(k, [c]);
+    }
+    for (const [k, b] of grid) {
+      const gx = Math.floor(k / 8192), gy = k - gx * 8192;
+      for (let i = 0; i < b.length; i++) for (let j = i + 1; j < b.length; j++) test(b[i], b[j]);
+      // half the neighbours, so each pair of cells is visited once
+      for (const [dx, dy] of [[1, -1], [1, 0], [1, 1], [0, 1]]) {
+        const o = grid.get((gx + dx) * 8192 + gy + dy);
+        if (o) for (const a of b) for (const c of o) test(a, c);
+      }
+    }
+    if (G.perf) { G.perf.cars = G.cars.length; G.perf.updated = awake.length; G.perf.pairs = pairs; G.perf.traffic = G.cars.filter((k) => k.traffic).length; }
+    for (const c of awake) {
       if (c.speed() > 0.5 || c.driver) {
         Physics.carVsObstacles(c);
         Physics.carVsWorld(c);
@@ -253,7 +339,7 @@ const Game = {
     this.updatePickups(dt);
     Parts.update(dt);
     Missions.update(dt);
-    this.maintainTraffic(dt);
+    AOV.update(dt);
     Train.update(dt);
     // factory chimneys smoke
     for (const t of G.city.talls) {
@@ -294,12 +380,11 @@ const Game = {
     return { x: G.cam.x + m.x, y: G.cam.y + m.y };
   },
 
-  // O: day <-> night, passing through dusk
-  toggleDayNight() {
-    const toNight = G.time === 0 || (G.timeFade && G.timeFade.steps[G.timeFade.steps.length - 1] === 0);
-    G.timeFade = { steps: toNight ? [1, 2] : [1, 0], t: 0 };
+  // O: fast-forward the clock 6 hours
+  skipTime() {
+    Clock.advance(360, { fast: true });
     Sound.ui('swoosh');
-    this.toast(toNight ? 'NIGHT FALLS' : 'SUNRISE', 1.8);
+    this.toast('+6H', 1.5);
   },
 
   wantsShoot() {
@@ -676,7 +761,7 @@ const Game = {
   tryEnterCar(p) {
     let best = null, bd = 1e9;
     for (const c of G.cars) {
-      if (c.wreck || c.alt > 2) continue;   // not a helicopter on a roof or in the air
+      if (c.wreck || c.alt > 2 || c.driver) continue;   // not a helicopter on a roof or in the air, nor a car someone drives
       const d = dist(p.x, p.y, c.x, c.y);
       if (c.contains(p.x, p.y, 18) && d < bd) { best = c; bd = d; }
     }
@@ -736,23 +821,6 @@ const Game = {
     }
   },
 
-  // keep ~50 intact parked cars around by quietly respawning off-screen
-  maintainTraffic(dt) {
-    G.trafficT = (G.trafficT || 0) - dt;
-    if (G.trafficT > 0) return;
-    G.trafficT = 2;
-    const intact = G.cars.filter((c) => !c.wreck).length;
-    if (intact >= 90) return;
-    const spots = G.city.parkSpots.concat(G.city.stalls);
-    for (let tries = 0; tries < 10; tries++) {
-      const s = pick(G.R, spots);
-      if (Math.abs(s.x - G.cam.cx) < G.cam.w / 2 + 120 && Math.abs(s.y - G.cam.cy) < G.cam.h / 2 + 120) continue;
-      if (this.spawnParked(s)) break;
-    }
-    // drop far-away wrecks so the list does not grow forever
-    G.cars = G.cars.filter((c) => !(c.wreck && c.smokeT < -60 && dist(c.x, c.y, G.cam.cx, G.cam.cy) > 700));
-  },
-
   // ----------------------------------------------------------- camera --
   updateCamera(dt) {
     const p = G.player, cam = G.cam;
@@ -799,15 +867,20 @@ const Game = {
     this.drawProjectiles(ctx, cam);
     Render.drawTall(ctx, cam);
 
-    const lights = G.time ? this.collectLights(cam) : null;
-    if (G.time) {
-      Render.applyLighting(ctx, cam, G.time, lights);
-      this.drawEmissive(ctx, cam);
+    const light = Clock.light();
+    if (light.ambient) {
+      Render.applyLighting(ctx, cam, light, this.collectLights(cam));
+      if (G.time) this.drawEmissive(ctx, cam);
     }
-    Render.drawBuildings(ctx, cam, G.time);
+    Render.drawBuildings(ctx, cam, light.s);
     this.drawAir(ctx, cam);
     Parts.draw(ctx, cam);
     this.drawMarkersOver(ctx, cam);
+    if (G.showLanes) { // #demo&lanes: the traffic lane graph (City.drawLanes, world coordinates)
+      ctx.save(); ctx.translate(-cam.x, -cam.y);
+      City.drawLanes(ctx, cam.x, cam.y, cam.x + cam.w, cam.y + cam.h, 1);
+      ctx.restore();
+    }
     if (G.state === 'play') HUD.draw(ctx, cam);
     else HUD.drawTitle(ctx, cam);
     HUD.drawPointer(ctx, cam);
@@ -886,10 +959,10 @@ const Game = {
       const sh = c.m.sheet, f = Assets.frame(sh, c.tag, c.frame());
       const img = c.flash > 0 ? Assets.tinted(sh, '#ffffff') : c.wreck || c.falling ? Assets.tinted(sh, '#2b2d42') : null;
       Assets.drawRot(ctx, sh, f, x, y, c.ang, img);
-      const T = TIMES[G.time];
-      if (T.ambient) { // not touched by the light pass, so darken it like the roofs
-        ctx.globalAlpha = G.time === 2 ? 0.55 : 0.25;
-        Assets.drawRot(ctx, sh, f, x, y, c.ang, Assets.tinted(sh, T.ambient));
+      const L = Clock.light();
+      if (L.ambient) { // not touched by the light pass, so darken it like the roofs
+        ctx.globalAlpha = L.s <= 1 ? 0.25 * L.s : 0.25 + 0.3 * (L.s - 1);
+        Assets.drawRot(ctx, sh, f, x, y, c.ang, Assets.tinted(sh, L.ambient));
         ctx.globalAlpha = 1;
       }
       if (Math.floor(G.t * 2) % 2 === 0) { // nav lights: red port, green starboard
@@ -997,6 +1070,9 @@ const HUD = {
     // money + multiplier
     Font.draw(ctx, '$' + G.money, W - 6, 5, { scale: 2, align: 'right', color: PAL.Y, shadow: true });
     Font.draw(ctx, '*' + G.mult, W - 6, 24, { align: 'right', color: PAL.q });
+    // clock and day
+    Font.draw(ctx, Clock.label(), W - 6, 35, { align: 'right', color: PAL.c });
+    Font.draw(ctx, 'DAY ' + Clock.day(), W - 6 - Font.width(Clock.label()) - 6, 35, { align: 'right', color: PAL.m });
     for (let i = 0; i < 5; i++) {
       const full = p.hp > i * 20 + 1;
       Assets.draw(ctx, 'props', Assets.frame('props', full ? 'heart' : 'heart_empty'), W - 28 - 9 * (4 - i) - 16, 24);
@@ -1009,6 +1085,10 @@ const HUD = {
       ctx.fillRect(7, 25, Math.round(40 * f), 3);
     }
     Missions.drawHUD(ctx, cam);
+    if (G.perf) { // #demo&perf: tick/render cost (ms, smoothed) and car counts
+      const P = G.perf;
+      Font.draw(ctx, `UPD ${P.upd.toFixed(2)}MS  DRAW ${P.draw.toFixed(2)}MS  CARS ${P.cars}  TRAFFIC ${P.traffic || 0}/${G.trafficBudget || 0}  UPDATED ${P.updated}  PAIRS ${P.pairs}`, 6, H - 32, { color: PAL.q });
+    }
     // objective arrow around the player
     const tgt = Missions.target();
     if (tgt && !p.dead) {
@@ -1084,6 +1164,7 @@ const HUD = {
     const t = Missions.target();
     if (t && Math.floor(G.t * 3) % 2) dot(t.x, t.y, PAL.L, 3);
     if (Math.floor(G.t * 4) % 2) dot(G.player.px, G.player.py, PAL.z, 2);
+    if (G.showAov) AOV.drawOnMap(ctx, x0, y0, s);
     Font.draw(ctx, 'MAP  (M)', W / 2, y0 - 12, { align: 'center', color: PAL.c });
     if (G.place && G.place.neighborhood) Font.draw(ctx, G.place.neighborhood, W / 2, y0 + mh + 6, { align: 'center', color: PAL.p });
   },
@@ -1097,7 +1178,7 @@ const HUD = {
       'SPACE           HANDBRAKE / SHOOT',
       'Q / TAB  1-7    SWITCH WEAPON',
       'Z / X           TANK TURRET',
-      'O DAY/NIGHT  N DUSK  M MAP  P PAUSE',
+      'O SKIP 6 HOURS   M MAP   P PAUSE',
       'H HORN/SIREN  - = VOLUME  0 MUTE',
       'WHEEL           ZOOM',
     ];
@@ -1172,19 +1253,30 @@ const Main = {
     this.acc += dt;
     Input.poll();
     while (this.acc >= STEP) {
+      const t0 = G.perf ? performance.now() : 0;
       Game.update(STEP);
+      if (G.perf) G.perf.upd += (performance.now() - t0 - G.perf.upd) * 0.05;
       Input.endTick();
       this.acc -= STEP;
     }
     Game.updateCamera(dt);
+    const t1 = G.perf ? performance.now() : 0;
     Game.render(this.low.ctx);
+    if (G.perf) G.perf.draw += (performance.now() - t1 - G.perf.draw) * 0.05;
     this.ctx.drawImage(this.low, 0, 0, this.cv.width, this.cv.height);
   },
 
   // #demo — scripted start for screenshots/tests, e.g. #demo&drive=90&time=2
   demo(params) {
     G.state = 'play';
-    G.time = +(params.get('time') || 0);
+    Clock.init([12 * 60, 18 * 60 + 30, 23 * 60 + 30][+(params.get('time') || 0)] ?? 12 * 60);
+    if (params.has('clock')) { const [hh, mm] = params.get('clock').split(':').map(Number); Clock.set(hh, mm || 0); }
+    for (let i = +(params.get('skip') || 0); i > 0; i--) Game.skipTime();
+    if (params.has('aov')) G.showAov = true;
+    if (params.has('lanes')) G.showLanes = true;
+    // warm=N: run N seconds of simulation first, so screenshots show settled traffic
+    for (let i = Math.round(+(params.get('warm') || 0) / STEP); i > 0; i--) { Game.update(STEP); Game.updateCamera(STEP); }
+    if (params.has('perf')) G.perf = { upd: 0, draw: 0, cars: 0, updated: 0, pairs: 0 };
     const drive = +(params.get('drive') || 0);
     const p = G.player;
     if (params.has('goto')) {

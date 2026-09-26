@@ -1588,7 +1588,9 @@ local function taillights(v, w, l, mode, x0)
 end
 
 -- recolour a finished vehicle as a burnt wreck, keeping its shape and shading
-local function wreckify(im)
+-- rnd(a, b) defaults to R(); pass a local generator to keep the global stream untouched
+local function wreckify(im, rnd)
+  local R = rnd or R
   local out = copy(im)
   local list = {"K", "k", "d", "m"}
   for y = 0, im.height - 1 do for x = 0, im.width - 1 do
@@ -2044,68 +2046,171 @@ add(railsheet, "flatcar", {railcar("flat")})
 save(railsheet)
 
 -- ------------------------------------------------------------- tank --
-local ARMY = {"g", "G", "h"}
+-- M1 Abrams-style, desert sand. Contracts (vehicles-agent / game.js):
+--   hull   36x60 body centred in the 48x72 cell, facing up
+--   turret pivots at the cell centre (24,36); game.js puts it at hull (0,+2 forward),
+--          i.e. hull cell (24,34); the gun tip is on row 0 (36 px ahead = muzzle point)
+local SAND = {"s", "t", "T"}   -- dark, mid, light
+-- drop the mid tones one step (t -> S, S -> s) so the sand reads against cream paving
+local function sandTone(im)
+  for y = 0, im.height - 1 do for x = 0, im.width - 1 do
+    local c = im:getPixel(x, y)
+    if c == C.t then im:drawPixel(x, y, C.S) elseif c == C.S then im:drawPixel(x, y, C.s) end
+  end end
+end
+
 local function hullImage(phase)
   local im = img(48, 72)
   local w, l = 36, 60
   local v = V(im, 6, 6)
-  -- tracks
-  for _, x0 in ipairs({0, w - 8}) do
-    v.r(x0, 0, 8, l, "K")
+  local cxl = w / 2 - 0.5                               -- hull centre line (local x 17.5)
+  -- tracks: run the full length, but only the ends show past the skirts
+  for _, x0 in ipairs({0, w - 7}) do
+    v.r(x0, 1, 7, l - 2, "K"); v.r(x0 + 1, 0, 5, l, "K")
     for y = 1, l - 2 do
       local link = (y + phase) % 4
-      v.r(x0 + 1, y, 6, 1, link == 0 and "k" or (link == 1 and "m" or "d"))
+      v.r(x0 + 1, y, 5, 1, link == 0 and "k" or (link == 1 and "m" or "d"))
     end
-    v.r(x0 + 1, 2, 6, 3, "d"); v.r(x0 + 1, l - 5, 6, 3, "d") -- sprockets
   end
-  -- hull
-  shell(v, 6, 2, w - 12, l - 4, 4, 2, ARMY)
-  -- camo
-  for _, b in ipairs({{12, 12, 4}, {23, 30, 5}, {13, 44, 4}, {25, 50, 3}}) do
-    for dy = -b[3], b[3] do for dx = -b[3] - 2, b[3] + 2 do
-      if dx * dx / 2 + dy * dy <= b[3] * b[3] then
-        local c = v.get(b[1] + dx, b[2] + dy)
-        if c == C.G then v.p(b[1] + dx, b[2] + dy, "o") elseif c == C.h then v.p(b[1] + dx, b[2] + dy, "N") end
+  -- hull deck between the skirts, slightly chamfered front corners
+  shell(v, 7, 1, w - 14, l - 2, 2, 1, {"s", "S", "t"})   -- a shade below the turret
+  -- side skirts: slab panels over the tracks, lit outer edge on the left, shaded on the right
+  for side = 0, 1 do
+    local x0 = side == 0 and 0 or w - 7
+    for y = 4, l - 5 do
+      for x = x0, x0 + 6 do
+        local c = "t"
+        if y == 4 then c = "T" elseif y == l - 5 then c = "s" end
+        if side == 0 and x == x0 then c = "T" end
+        if side == 1 and x == x0 + 6 then c = "s" end
+        if side == 0 and x == x0 + 6 then c = "S" end           -- inner lip, in the deck's shadow
+        if side == 1 and x == x0 then c = "T" end
+        v.p(x, y, c)
       end
-    end end
+    end
+    -- panel seams (the skirt is seven bolted plates)
+    for _, y in ipairs({12, 19, 26, 33, 40, 47}) do
+      v.r(x0, y, 7, 1, "S"); v.r(x0 + 1, y + 1, 5, 1, "T")
+    end
+    v.r(x0 + 2, 5, 3, 1, side == 0 and "c" or "c")             -- headlight clusters on the fenders
+    v.p(x0 + 3, 5, "j")
+    v.r(x0 + 2, l - 6, 3, 1, "r")                               -- tail lights
   end
-  -- front glacis, lights, tow hooks
-  v.r(8, 3, w - 16, 1, "H")
-  v.r(9, 2, 3, 2, "c"); v.r(w - 12, 2, 3, 2, "c")
-  -- driver hatch
-  v.r(w // 2 - 3, 6, 6, 5, "K"); v.r(w // 2 - 2, 7, 4, 3, "g")
-  -- engine deck
-  for y = l - 16, l - 7, 2 do v.r(10, y, w - 20, 1, "K") end
-  v.r(8, l - 4, 3, 2, "r"); v.r(w - 11, l - 4, 3, 2, "r")
-  -- tool boxes on the fenders
-  v.r(7, 20, 3, 10, "n"); v.r(w - 10, 20, 3, 10, "n")
+  -- deck edges against the skirts
+  v.r(7, 3, 1, l - 6, "s"); v.r(w - 8, 3, 1, l - 6, "s")
+  -- sloped glacis: long light plate, darker lower front plate
+  for y = 1, 9 do
+    local ins = math.max(0, 3 - y)
+    v.r(8 + ins, y, w - 16 - ins * 2, 1, y <= 2 and "s" or (y == 3 and "T" or "t"))
+  end
+  v.r(9, 10, w - 18, 1, "s")                                     -- glacis break line
+  -- driver: centred hatch with three periscopes
+  v.r(14, 12, 8, 4, "s"); v.r(15, 13, 6, 2, "t"); v.r(15, 13, 6, 1, "T")
+  for _, x in ipairs({14, 17, 20}) do v.r(x, 11, 2, 1, "k"); v.p(x, 11, "B") end
+  -- turret ring (shows when the turret swings)
+  for y = 0, l - 1 do for x = 0, w - 1 do
+    local d = math.sqrt((x - cxl) ^ 2 + (y - 28) ^ 2)
+    if d >= 12.6 and d < 13.6 and v.get(x, y) == C.S then v.p(x, y, "t") end
+  end end
+  -- engine deck: two louvred grille panels either side of a spine
+  for _, x0 in ipairs({9, 19}) do
+    v.r(x0, 44, 8, 10, "s")
+    for y = 45, 52, 2 do v.r(x0 + 1, y, 6, 1, "k"); v.r(x0 + 1, y + 1, 6, 1, "S") end
+  end
+  v.r(17, 44, 2, 10, "t"); v.p(17, 44, "T")
+  -- rear exhaust grille across the back plate
+  v.r(10, 55, w - 20, 3, "K")
+  for x = 11, w - 12, 2 do v.r(x, 55, 1, 3, "d") end
+  sandTone(im)
   outline(im, "K")
   return im
 end
 
 local function turretImage()
   local im = img(48, 72)
-  local cx, cy = 24, 36
-  -- barrel (pivot at the cell centre, pointing up)
-  rect(im, cx - 2, cy - 34, 4, 26, "d"); rect(im, cx - 2, cy - 34, 1, 26, "m")
-  rect(im, cx - 3, cy - 36, 6, 4, "k"); rect(im, cx - 3, cy - 36, 6, 1, "d") -- muzzle brake
-  rect(im, cx - 3, cy - 16, 6, 5, "g")                                       -- mantlet
-  blob(im, cx, cy + 1, 10, 11, ARMY)
-  rect(im, cx - 7, cy + 9, 14, 3, "g")                                        -- bustle
-  disc(im, cx + 4, cy + 1, 3, "K"); disc(im, cx + 4, cy + 1, 2, "G")          -- commander hatch
-  disc(im, cx - 4, cy + 3, 2, "K")
-  rect(im, cx - 8, cy + 6, 1, 1, "l")
-  for i = 0, 8 do px(im, cx - 8, cy + 6 + i, "k") end                         -- antenna
+  local cx, cy = 23.5, 36                               -- pivot; x 23|24 straddle the centre line
+  local function half(dy)                               -- turret half-width at row dy
+    if dy < -13 or dy > 10 then return -1 end
+    if dy < -9 then return 6 + (dy + 13) * 9 / 4 end    -- the cheeks: a shallow forward chevron
+    return 15 - (dy + 9) * 1.5 / 19                     -- slab sides taper a little to the rear
+  end
+  local function body(x, y)
+    local dx, dy = math.abs(x - cx), y - cy
+    if dy < -10 and dx < 3 then return false end        -- slot for the gun mantlet
+    return dx <= half(dy)
+  end
+  -- bustle rack behind the turret
+  local bx0, bx1, by0, by1 = 10, 37, cy + 10, cy + 16
+  rect(im, bx0, by0, bx1 - bx0 + 1, by1 - by0 + 1, "s")
+  rect(im, bx0 + 1, by0 + 1, bx1 - bx0 - 1, by1 - by0 - 1, "k")
+  for x = bx0 + 4, bx1 - 3, 4 do rect(im, x, by0, 1, by1 - by0 + 1, "s") end
+  rect(im, bx0, by0 + 3, bx1 - bx0 + 1, 1, "s")
+  rect(im, bx0, by0, bx1 - bx0 + 1, 1, "S")
+  -- stowage in the rack: two olive bags and a crate
+  rect(im, 13, by0 + 1, 6, 4, "G"); rect(im, 13, by0 + 1, 6, 1, "h"); px(im, 18, by0 + 4, "g")
+  rect(im, 27, by0 + 2, 5, 3, "G"); rect(im, 27, by0 + 2, 5, 1, "h")
+  rect(im, 21, by0 + 1, 4, 3, "N"); rect(im, 21, by0 + 1, 4, 1, "o")
+  -- turret body, 2-px bevel so the flat roof reads above sloped side walls
+  shape(im, 0, 0, 47, 71, body, SAND, 2)
+  -- the right cheek faces away from the light
+  for y = cy - 13, cy - 9 do for x = 24, 47 do
+    if body(x, y) and not body(x + 1, y) then px(im, x, y, "s"); px(im, x - 1, y, "S") end
+  end end
+  -- roof plate seam behind the cheek armour
+  for x = 10, 37 do if get(im, x, cy - 6) == C.t then px(im, x, cy - 6, "S") end end
+  -- mantlet in the recess
+  rect(im, 21, cy - 13, 6, 3, "s"); rect(im, 22, cy - 13, 4, 2, "S"); rect(im, 22, cy - 13, 1, 2, "t")
+  -- smoothbore gun, thermal sleeve bands, bore evacuator bulge
+  rect(im, 23, 0, 1, cy - 13, "T"); rect(im, 24, 0, 1, cy - 13, "S")
+  for _, y in ipairs({7, 19}) do px(im, 23, y, "S"); px(im, 24, y, "s") end
+  rect(im, 22, 11, 4, 5, "t"); rect(im, 22, 11, 1, 5, "T"); rect(im, 25, 11, 1, 5, "s")
+  rect(im, 22, 15, 4, 1, "s"); px(im, 22, 15, "S")
+  rect(im, 23, 0, 2, 1, "s")                                   -- muzzle face
+  -- gunner's sight "doghouse", right front of the roof
+  rect(im, 27, cy - 8, 5, 4, "s"); rect(im, 27, cy - 8, 4, 3, "t"); rect(im, 27, cy - 8, 4, 1, "k"); px(im, 28, cy - 8, "B")
+  -- commander's cupola (right rear) with the .50 cal pointing forward
+  disc(im, 30, cy + 3, 4, "s"); disc(im, 30, cy + 3, 3, "S"); disc(im, 30, cy + 3, 2, "t")
+  for _, p in ipairs({{27, cy + 1}, {33, cy + 1}, {27, cy + 5}, {33, cy + 5}, {30, cy - 1}}) do px(im, p[1], p[2], "k") end
+  px(im, 29, cy + 2, "T")
+  rect(im, 33, cy - 4, 1, 5, "k"); rect(im, 33, cy, 2, 2, "d"); px(im, 33, cy - 5, "d")
+  -- loader's hatch (left) with the skate-mount MG
+  rect(im, 14, cy + 1, 7, 5, "s"); rect(im, 15, cy + 2, 5, 3, "S"); rect(im, 15, cy + 2, 5, 1, "T")
+  rect(im, 15, cy - 3, 1, 4, "k"); px(im, 15, cy - 4, "d")
+  -- commander's independent thermal viewer, left front
+  disc(im, 18, cy - 7, 2, "s"); rect(im, 17, cy - 8, 2, 1, "k"); px(im, 17, cy - 8, "B")
+  -- smoke dischargers on the front of each side wall
+  rect(im, 9, cy - 8, 1, 3, "k"); rect(im, 38, cy - 8, 1, 3, "k")
+  -- antenna bases at the rear corners
+  px(im, 12, cy + 8, "k"); px(im, 35, cy + 8, "k")
+  sandTone(im)
   outline(im, "K")
   return im
+end
+
+-- the old tank's wrecks drew from R(); burn the same draws so every sheet after this one
+-- still generates byte-identical (2276 / 605 = opaque pixels of the old hull / turret)
+local function burnOldWreck(opaque)
+  for _ = 1, opaque do R() end
+  for _ = 1, 8 do R(4, 43); R(4, 67) end
+end
+local function localRnd(seed)
+  local st = seed
+  return function(a, b)
+    st = (st * 1103515245 + 12345) % 2147483648
+    local f = st / 2147483648
+    if a then return a + math.floor(f * (b - a + 1)) end
+    return f
+  end
 end
 
 local tank = sheet("tank", 48, 72)
 do
   local h0, h1 = hullImage(0), hullImage(2)
-  add(tank, "hull", {h0, h1, wreckify(h0)})
+  burnOldWreck(2276)
+  add(tank, "hull", {h0, h1, wreckify(h0, localRnd(1980))})
   local t = turretImage()
-  add(tank, "turret", {t, wreckify(t)})
+  burnOldWreck(605)
+  add(tank, "turret", {t, wreckify(t, localRnd(1981))})
 end
 save(tank)
 

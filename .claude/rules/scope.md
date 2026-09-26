@@ -1,7 +1,7 @@
 # Scope (set by the user; don't expand without asking)
 
-- **No traffic and no pedestrians yet.** They are planned for later iterations, so keep 3-tile
-  sidewalks and lane layouts compatible with them.
+- **Traffic: unlocked** 2026-09-26 (spec `docs/specs/traffic-v1.md`); phase A (the AOV) first, then phase B.
+  **No pedestrians yet**: they come later and use the same AOV, so keep 3-tile sidewalks compatible.
 - **Sound:** being built now (spec `docs/specs/sound-v1.md`, owned by `sound-agent`). Radio music is still on hold.
 - **Radio:** on hold at the user's request. `radio-agent` may only design and write specs until the
   user unlocks it.

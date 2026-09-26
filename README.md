@@ -21,7 +21,7 @@ neighbourhood, street, landmark and coordinate, is in [docs/geography.md](docs/g
 | **Pastel Airport** | SW coast | A wide north-south runway, taxiways, an apron with full-size airliners at the gates, a terminal, two hangars and a control tower. |
 | **Nature** | between | **Pastel Bay** cuts in from the north coast, crossed by the **Pastel Gate Bridge** (134-tile deck, two orange towers, sagging cables). There are also the Pinewood forests (NW), Clover Meadows, the Lilac River flowing from Heron Lake to the sea, the Amber Desert (SE: dunes, rocks, cacti, an oasis), Mirror and Willow lakes, rocky capes and five islands. |
 
-**Highways** (three lanes each way with shoulders) link every district. Where they cross water
+**Highways** (two lanes each way with shoulders) link every district. Where they cross water
 they become bridges. A **freight train** runs north-south between the Ironworks freight yard and
 Union Station, crossing roads at level crossings. The HUD shows the street you're on, and a toast
 names each neighbourhood as you enter it.
@@ -45,8 +45,7 @@ blocks local files, use `python3 -m http.server` and go to <http://localhost:800
 | H | | horn (hold). Police cars and the ambulance: a tap toggles the siren, holding honks |
 | Space / Shift | | helicopter: climb / descend (W/S fly forward/back, A/D turn; exit only when landed) |
 | - / = / 0 | volume down / up / mute | |
-| O | toggle day ↔ night (fades through dusk) | |
-| N | cycle day, dusk and night | |
+| O | skip 6 hours (the clock fast-forwards) | |
 | Mouse wheel | zoom (5 steps); scrolls messages over the phone | |
 | M / P | city map / pause | |
 
@@ -54,6 +53,13 @@ Gamepads work too: stick/d-pad, RT gas, LT brake, A/X handbrake or shoot, Y ente
 
 ## Gameplay
 
+- **Time** passes on its own: a day lasts 24 real minutes (the clock is under your money). The light
+  moves through dawn, day, sunset and night; **O** skips 6 hours.
+- **Traffic** drives on the right, at about a third of each vehicle's top speed, and every region has
+  its own mix: buses, taxis and ambulances downtown, a few cars in the suburbs, heavy trucks at
+  Ironworks, pickups and tractors on the farms. Cars stop at red lights and give way at junctions.
+  Block one and it honks, then drives around you; ram or shoot one and it flees at full speed.
+  Traffic only exists around you (the area of view), so the city stays light on the browser.
 - **Jobs** come in two ways. Either a payphone rings (GTA1 style, and the yellow arrow points to
   it), or someone calls your **cellphone** (right click → Answer / Nope). You can also call a
   contact yourself: Mama Rosa (deliveries), Big Tony (boosts), Zed (torch jobs) or Lucky Lou
@@ -134,6 +140,9 @@ throttle sliders, and **measure levels** shows each sound's peak and RMS.
 ```
 index.html          boot + script order
 src/core.js         math, RNG, sprite atlas, bitmap font, keyboard/gamepad input
+src/clock.js        in-game clock (1 game minute per second) and the day/night light curve
+src/traffic.js      traffic driver AI: lane following, lights, yielding, honk, pass, flee
+src/aov.js          area of view: what exists around the player (streamed traffic, used cars, wrecks)
 src/city.js         world generator: terrain, grids, road profiles, highways, landmarks, names
 src/render.js       baked ground, oblique pseudo-3D buildings, trees/lamps, lighting
 src/entities.js     cars (arcade drift physics), player, collisions, particles
@@ -228,7 +237,13 @@ screenshots. Parameters combine with `&`:
 | Param | Effect |
 |---|---|
 | `goto=<place>` | jump there and lock the camera. Any landmark, district, neighbourhood, street, lake or island name works (case and spaces ignored), e.g. `goto=Pastel Gate Bridge`, `goto=Stadium`, `goto=PCTV Tower`, `goto=Hospital`, `goto=Union Station`, `goto=Airport`, `goto=Port`, `goto=Marina`, `goto=Beach`, `goto=Central Park`, `goto=Police Station`, `goto=Freight Yard`, `goto=Spawn`. The full list is in `G.city.places` / docs/geography.md. |
-| `time=1` / `time=2` | dusk / night |
+| `time=1` / `time=2` | dusk / night (the clock at 18:30 / 23:30; `time=0` is 12:00) |
+| `clock=HH:MM` | set the clock, e.g. `clock=06:15` for dawn |
+| `skip=N` | press O N times (fast-forward 6 h each) |
+| `aov` | with `map`: draw the area of view (cyan screen, yellow AOV, pink keep line) and every car |
+| `lanes` | draw the traffic lane graph (lanes, stop lines, junction paths) |
+| `warm=N` | simulate N seconds before the first frame, so screenshots show settled traffic |
+| `perf` | show car counts, cars updated this tick and collision pairs (`node tools/bench.js` times the update loop) |
 | `drive=N` | enter the starter car and drive for N ticks (`&crash` steers into things) |
 | `boom` | blow up a nearby car |
 | `mission=delivery\|boost\|torch\|rush` | start that job |

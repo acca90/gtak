@@ -20,7 +20,7 @@ const MODULE = 32;
 
 const TIMES = [
   { name: 'DAY' },
-  { name: 'DUSK', ambient: '#e8aaa0', lights: 0.45, glow: 0.55 },
+  { name: 'DUSK', ambient: '#f0b096', lights: 0.45, glow: 0.55 },
   { name: 'NIGHT', ambient: '#2f3572', lights: 1, glow: 1 },
 ];
 
@@ -693,7 +693,11 @@ const Render = {
     return cv;
   },
 
-  drawBuildings(ctx, cam, time) {
+  // s = Clock look (0 day, 1 dusk, 2 night): each building is drawn in the cached look
+  // floor(s), then ceil(s) over it at the fractional alpha
+  drawBuildings(ctx, cam, s) {
+    const a = Math.floor(Math.min(s, 1.999)), f = s - a;
+    const lo = f > 0.97 ? a + 1 : a, hi = f > 0.03 && f <= 0.97 ? a + 1 : -1;
     this.frameNo++;
     const list = [];
     const m = 200;
@@ -702,7 +706,14 @@ const Render = {
       list.push({ b, d: dx * dx + dy * dy, ox: Math.round(dx * PARALLAX * b.height), oy: Math.round(dy * PARALLAX * b.height) });
     }
     list.sort((a, b) => b.d - a.d);
-    for (const it of list) { it.b.seen = this.frameNo; this.drawBuilding(ctx, cam, it.b, it.ox, it.oy, time); }
+    for (const it of list) {
+      it.b.seen = this.frameNo;
+      this.drawBuilding(ctx, cam, it.b, it.ox, it.oy, lo);
+      if (hi < 0) continue;
+      ctx.globalAlpha = f;
+      this.drawBuilding(ctx, cam, it.b, it.ox, it.oy, hi);
+      ctx.globalAlpha = 1;
+    }
     if (this.frameNo % 120 === 0) {
       for (const b of this.city.buildings) if (b.cache.size && this.frameNo - (b.seen || 0) > 240) b.cache.clear();
     }
@@ -778,10 +789,12 @@ const Render = {
 
   // traffic-light state: 'v' and 'h' signals alternate (8 s green, 2 s yellow, 10 s red)
   // frames of props:traffic_light: 0 red, 1 yellow, 2 green
+  // 22 s cycle, one global phase: v green 8 s, amber 2 s, then 1 s all-red; h the same, offset 11 s
+  // (2 green, 1 amber, 0 red). The all-red second lets amber runners clear before the other way goes.
   signalFrame(axis) {
-    const t = (G.t % 20 + 20) % 20;
+    const t = (G.t % 22 + 22) % 22;
     const v = t < 8 ? 2 : t < 10 ? 1 : 0;
-    const h = t < 10 ? 0 : t < 18 ? 2 : 1;
+    const h = t < 11 ? 0 : t < 19 ? 2 : t < 21 ? 1 : 0;
     return axis === 'v' ? v : h;
   },
 
@@ -925,8 +938,9 @@ const Render = {
     return this._cone;
   },
 
-  applyLighting(ctx, cam, time, lights) {
-    const T = TIMES[time];
+  // light = Clock.light(): { ambient, lights }
+  applyLighting(ctx, cam, light, lights) {
+    const T = light;
     if (!this.lightCv || this.lightCv.width !== cam.w || this.lightCv.height !== cam.h) this.lightCv = mkCanvas(cam.w, cam.h);
     const lc = this.lightCv.ctx;
     lc.globalCompositeOperation = 'source-over';
