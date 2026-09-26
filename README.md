@@ -50,7 +50,7 @@ blocks local files, use `python3 -m http.server` and go to <http://localhost:800
 | Mouse wheel | zoom (5 steps); scrolls messages over the phone | |
 | M / P | city map / pause | |
 
-Gamepads work too: stick/d-pad, RT gas, LT brake, A/X handbrake or shoot, Y enter/exit, right stick turret.
+Gamepads work too: stick/d-pad, RT gas, LT brake, A/X handbrake or shoot, Y enter/exit, right stick turret, L3 horn. Helicopter: A/X climb, L3 descend.
 
 ## Gameplay
 

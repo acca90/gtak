@@ -1,6 +1,6 @@
 # Spec: Sound v1 — the whole game makes noise
 
-Status: **implemented** 2026-09-26, awaiting the user's listening test. Coordinator: main session.
+Status: **implemented** 2026-09-26; play-tested and approved by the user 2026-09-26. Coordinator: main session.
 Owners: **sound-agent** (everything audio), **vehicles-agent** (siren/horn state), the coordinator
 (keys, lightbar visuals, integration). Radio stays **on hold** (radio-agent); leave the `music`
 bus empty.

@@ -1,6 +1,6 @@
 # Spec: Weapons v2 — classic arsenal and gun stores
 
-Status: **implemented** 2026-09-26, awaiting a play test. Coordinator: main session.
+Status: **implemented** 2026-09-26; play-tested and approved by the user 2026-09-26. Coordinator: main session.
 Owners: **weapons-agent** (weapons and projectiles), **pixel-agent** (art), **geo-agent** (the five
 stores), **sound-agent** (sounds), and the coordinator (shop UI, keys, start money, integration).
 

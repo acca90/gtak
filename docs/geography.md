@@ -210,9 +210,8 @@ cables), `Port Cranes`, `Runway` (the airliner lined up), `Terminal` (the gates)
   east-west band of the forest, not just the lake.
 - `quay` only has an edge stripe along the top, so the main quay's edge row (water to the south)
   uses the same striped tile as the mole's (water to the north). There's no `bridge_v` yet (no vertical road
-  bridge needed so far), and no right-hand runway edge or side-platform edge tiles.
-- The prop-plane sprite on `planes` faces east instead of up (reported to pixel-agent); the
-  airliner faces up correctly.
+  bridge needed so far), and no side-platform edge tiles. (The runway has both edge lines since
+  2026-09-26: `tiles:runway` frame 4 is the east edge.)
 - The forced land around the airport makes the south-west coast straighter than elsewhere.
 - Ideas: a lighthouse on Gull Island, a coastal road along the south, bus stops on avenues, a
   ferry across the bay, bigger forests with trails, farm tracks out to the fields' far corners.

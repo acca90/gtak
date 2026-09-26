@@ -1,6 +1,6 @@
 # Spec: Flyable helicopters
 
-Status: **implemented** 2026-09-25, awaiting a play test. The user asked: "make the copters work".
+Status: **implemented** 2026-09-25; play-tested and approved by the user 2026-09-26. The user asked: "make the copters work".
 
 ## 1. Behaviour (vehicles-agent)
 

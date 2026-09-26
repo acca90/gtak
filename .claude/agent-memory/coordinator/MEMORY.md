@@ -1,12 +1,19 @@
 # coordinator — cross-cutting decisions
 Written by the main session (not a subagent). Format: `.claude/rules/decisions.md`. Newest first.
 
+## 2026-09-26 · Gamepad L3 = horn on the ground, descend in a helicopter
+- **Decision:** `PADMAP.descend = [10]`, sharing L3 with `horn`. Helicopters have no horn and only the
+  flight code reads `descend`, so the two never clash. Climb stays on A/X (`fire`).
+- **Why:** descend was keyboard-only, so a pad player couldn't land; the user asked to finish the copter.
+- **Where:** `PADMAP` in src/core.js; README controls.
+- **Status:** active
+
 ## 2026-09-26 · Weapons v2 + gun stores (spec: docs/specs/weapons-v2.md)
 - **Decision:** six buyable weapons (pistol, uzi, shotgun, bazooka, grenades, molotovs); new ones are store-only.
   Five gun stores (`c.gunshops`); walking onto the door mat opens `src/shop.js`, which pauses the world. Keys 1-7 select
   weapons (Digit0 stays mute), Backspace/Esc leave the store. `START_MONEY = 10000`. Tank armour vs fire/rockets is
   ×0.35 in weapons code (`rocketBlast`, `updateFires`); vehicles-agent may move it into a shared helper later.
-- **Status:** active; not play-tested
+- **Status:** active; play-tested and approved by the user 2026-09-26
 
 ## 2026-09-26 · Big things at world scale; Beira-Rio stadium (spec: docs/specs/scale-stadium-v1.md)
 - **Decision:** airliner ≈ 272×256 px and propplane on sheet `planes`, container ship 176×960 on `ships`, boats and cranes on
@@ -19,7 +26,7 @@ Written by the main session (not a subagent). Format: `.claude/rules/decisions.m
 - **Decision:** all spec §5 sounds are Web Audio synthesis in `src/audio.js`, with no samples. Buses: `master → { sfx, ui, music, amb }`.
   Hooks are one-line `Sound.*` calls in game.js and missions.js; phone and vehicle sounds are read from state. `soundboard.html` is the review page.
   Volume and mute persist in localStorage `pastelcity.sound`. Future traffic must set `car.driver` on moving NPC cars to get engine sound.
-- **Status:** active; not yet listened to by the user
+- **Status:** active; play-tested and approved by the user 2026-09-26
 
 ## 2026-09-25 · Sound v1 started; keys H / - / = / 0
 - **Decision:** the user unlocked sound (spec docs/specs/sound-v1.md). Keys: H = horn (a tap toggles the

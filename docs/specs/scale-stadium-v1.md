@@ -1,6 +1,6 @@
 # Spec: Ships and planes at world scale, and a Beira-Rio stadium
 
-Status: **implemented** 2026-09-26, awaiting a play test. Coordinator: main session.
+Status: **implemented** 2026-09-26; play-tested and approved by the user 2026-09-26. Coordinator: main session.
 Owners: **pixel-agent** (sprites, the stadium's look in `Render.stadiumRoof`), **geo-agent** (space for
 the new sizes, stadium surroundings), **sound-agent** (updates its sheet checks).
 

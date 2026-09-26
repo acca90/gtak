@@ -144,7 +144,7 @@ const KEYMAP = {
 // standard gamepad mapping
 const PADMAP = {
   up: [12], down: [13], left: [14], right: [15],
-  fire: [0, 2], shoot: [2], use: [3], horn: [10], weapon: [4, 5], time: [8], pause: [9], start: [9, 0],
+  fire: [0, 2], shoot: [2], use: [3], horn: [10], descend: [10], weapon: [4, 5], time: [8], pause: [9], start: [9, 0],
   gas: [7], brake: [6], map: [1],
 };
 
