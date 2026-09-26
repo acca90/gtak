@@ -142,6 +142,78 @@
     "spriteSourceSize": { "x": 0, "y": 0, "w": 48, "h": 48 },
     "sourceSize": { "w": 48, "h": 48 },
     "duration": 100
+   },
+   {
+    "filename": "big 16.aseprite",
+    "frame": { "x": 768, "y": 0, "w": 48, "h": 48 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 48, "h": 48 },
+    "sourceSize": { "w": 48, "h": 48 },
+    "duration": 100
+   },
+   {
+    "filename": "big 17.aseprite",
+    "frame": { "x": 816, "y": 0, "w": 48, "h": 48 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 48, "h": 48 },
+    "sourceSize": { "w": 48, "h": 48 },
+    "duration": 100
+   },
+   {
+    "filename": "big 18.aseprite",
+    "frame": { "x": 864, "y": 0, "w": 48, "h": 48 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 48, "h": 48 },
+    "sourceSize": { "w": 48, "h": 48 },
+    "duration": 100
+   },
+   {
+    "filename": "big 19.aseprite",
+    "frame": { "x": 912, "y": 0, "w": 48, "h": 48 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 48, "h": 48 },
+    "sourceSize": { "w": 48, "h": 48 },
+    "duration": 100
+   },
+   {
+    "filename": "big 20.aseprite",
+    "frame": { "x": 960, "y": 0, "w": 48, "h": 48 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 48, "h": 48 },
+    "sourceSize": { "w": 48, "h": 48 },
+    "duration": 100
+   },
+   {
+    "filename": "big 21.aseprite",
+    "frame": { "x": 1008, "y": 0, "w": 48, "h": 48 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 48, "h": 48 },
+    "sourceSize": { "w": 48, "h": 48 },
+    "duration": 100
+   },
+   {
+    "filename": "big 22.aseprite",
+    "frame": { "x": 1056, "y": 0, "w": 48, "h": 48 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 48, "h": 48 },
+    "sourceSize": { "w": 48, "h": 48 },
+    "duration": 100
+   },
+   {
+    "filename": "big 23.aseprite",
+    "frame": { "x": 1104, "y": 0, "w": 48, "h": 48 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 48, "h": 48 },
+    "sourceSize": { "w": 48, "h": 48 },
+    "duration": 100
    }
  ],
  "meta": {
@@ -149,7 +221,7 @@
   "version": "1.3.18.6-x64",
   "image": "big.png",
   "format": "RGBA8888",
-  "size": { "w": 768, "h": 48 },
+  "size": { "w": 1152, "h": 48 },
   "scale": "1",
   "frameTags": [
    { "name": "tree_a", "from": 0, "to": 0, "direction": "forward", "color": "#000000ff" },
@@ -164,7 +236,15 @@
    { "name": "fueltank", "from": 12, "to": 12, "direction": "forward", "color": "#000000ff" },
    { "name": "pool", "from": 13, "to": 13, "direction": "forward", "color": "#000000ff" },
    { "name": "smokestack", "from": 14, "to": 14, "direction": "forward", "color": "#000000ff" },
-   { "name": "haystack", "from": 15, "to": 15, "direction": "forward", "color": "#000000ff" }
+   { "name": "haystack", "from": 15, "to": 15, "direction": "forward", "color": "#000000ff" },
+   { "name": "palm", "from": 16, "to": 16, "direction": "forward", "color": "#000000ff" },
+   { "name": "pine", "from": 17, "to": 17, "direction": "forward", "color": "#000000ff" },
+   { "name": "boulder", "from": 18, "to": 18, "direction": "forward", "color": "#000000ff" },
+   { "name": "dish", "from": 19, "to": 19, "direction": "forward", "color": "#000000ff" },
+   { "name": "floodlight", "from": 20, "to": 20, "direction": "forward", "color": "#000000ff" },
+   { "name": "pylon", "from": 21, "to": 21, "direction": "forward", "color": "#000000ff" },
+   { "name": "ctower", "from": 22, "to": 22, "direction": "forward", "color": "#000000ff" },
+   { "name": "mast", "from": 23, "to": 23, "direction": "forward", "color": "#000000ff" }
   ],
   "layers": [
    { "name": "big", "opacity": 255, "blendMode": "normal" }

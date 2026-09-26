@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Soundboard</title>
+<style>
+  :root { --bg: #1a1c2c; --panel: #2b2d42; --ink: #f2efe6; --dim: #7f8198; --accent: #f29b88; --on: #54e8d4; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 13px/1.4 ui-monospace, monospace; }
+  header { position: sticky; top: 0; background: var(--bg); padding: 10px 16px; border-bottom: 1px solid var(--panel); z-index: 2; display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+  h1 { font-size: 16px; margin: 0; color: var(--accent); }
+  label { color: var(--dim); }
+  nav a { color: var(--dim); margin-right: 10px; text-decoration: none; }
+  nav a:hover { color: var(--ink); }
+  section { padding: 4px 16px 16px; }
+  h2 { font-size: 14px; color: var(--accent); margin: 14px 0 6px; }
+  .rows { display: grid; grid-template-columns: repeat(auto-fill, minmax(430px, 1fr)); gap: 6px; }
+  .row { background: var(--panel); border-radius: 6px; padding: 6px 8px; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+  .row .name { min-width: 200px; flex: 1; }
+  .row .note { color: var(--dim); font-size: 11px; width: 100%; }
+  .row .meter { color: var(--dim); font-size: 11px; }
+  .row .meter.bad { color: #ff5f7e; }
+  button { background: #3b3f58; color: var(--ink); border: 1px solid #565c7a; border-radius: 4px; font: inherit; padding: 2px 10px; cursor: pointer; }
+  button:hover { background: #464b66; }
+  button.on { background: var(--on); color: var(--bg); border-color: var(--on); }
+  input[type=range] { width: 90px; vertical-align: middle; }
+  #status { color: var(--dim); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Pastel City: soundboard</h1>
+  <label>volume <input id="vol" type="range" min="0" max="10" value="7"></label>
+  <label>pan <input id="pan" type="range" min="-10" max="10" value="0"></label>
+  <label>distance <input id="dist" type="range" min="0" max="10" value="0"></label>
+  <button id="stopAll">stop all loops</button>
+  <button id="measure">measure levels</button>
+  <span id="status">click any button to start audio</span>
+  <nav id="nav"></nav>
+</header>
+<main id="main"></main>
+<script src="src/audio.js"></script>
+<script>
+// Every sound in src/audio.js (Sound.catalog), grouped like the spec. One-shots have a play
+// button, loops start/stop and get sliders where they react to something (engine speed, amount).
+// "measure levels" renders each sound offline and shows its peak and RMS in dBFS, so levels can
+// be compared without listening (the game's limiter sits after this, so peaks near 0 are fine).
+const main = document.getElementById('main'), nav = document.getElementById('nav'), status = document.getElementById('status');
+const live = new Set();   // running loop rows
+const rows = [];
+
+function slider(row, name, min, max, val, label) {
+  const l = document.createElement('label');
+  l.textContent = label + ' ';
+  const s = document.createElement('input');
+  s.type = 'range'; s.min = min; s.max = max; s.value = val;
+  s.oninput = () => { row.state[name] = +s.value / 100; };
+  row.state[name] = val / 100;
+  l.appendChild(s);
+  row.el.appendChild(l);
+}
+
+Sound.catalog.forEach(([group, items], gi) => {
+  const sec = document.createElement('section');
+  sec.id = 'g' + gi;
+  sec.innerHTML = `<h2>${group}</h2>`;
+  const box = document.createElement('div');
+  box.className = 'rows';
+  sec.appendChild(box);
+  main.appendChild(sec);
+  nav.insertAdjacentHTML('beforeend', `<a href="#g${gi}">${group}</a>`);
+  for (const item of items) {
+    const row = { item, state: {}, el: document.createElement('div'), voice: null };
+    row.el.className = 'row';
+    row.el.innerHTML = `<span class="name">${item.label}</span>`;
+    const b = document.createElement('button');
+    if (item.loop) {
+      b.textContent = 'start';
+      b.onclick = () => {
+        if (row.voice) { Sound.stopPreview(row.voice); row.voice = null; live.delete(row); b.textContent = 'start'; b.classList.remove('on'); return; }
+        row.voice = Sound.startLoop(item.loop, item.arg);
+        if (!row.voice) { status.textContent = 'audio unavailable'; return; }
+        live.add(row); b.textContent = 'stop'; b.classList.add('on');
+      };
+    } else {
+      b.textContent = 'play';
+      b.onclick = () => (item.fn ? (Sound.unlock(), Sound.ctx && item.fn(Sound)) : Sound.preview(item.shot, item.o));
+    }
+    row.el.appendChild(b);
+    if (item.ctl === 'engine') {
+      slider(row, 'speed', 0, 100, 40, 'speed');
+      slider(row, 'throttle', 0, 100, 100, 'throttle');
+      const l = document.createElement('label');
+      l.innerHTML = '<input type="checkbox"> handbrake rev';
+      l.firstChild.onchange = (e) => { row.state.rev = e.target.checked; };
+      row.el.appendChild(l);
+    } else if (item.ctl === 'rotor') {
+      slider(row, 'amount', 0, 100, 100, 'spin');
+      slider(row, 'throttle', 0, 100, 50, 'throttle');
+    } else if (item.ctl === 'amount') slider(row, 'amount', 0, 100, 70, 'amount');
+    row.meter = document.createElement('span');
+    row.meter.className = 'meter';
+    row.el.appendChild(row.meter);
+    if (item.note) row.el.insertAdjacentHTML('beforeend', `<span class="note">${item.note}</span>`);
+    box.appendChild(row.el);
+    rows.push(row);
+  }
+});
+
+// loops read their sliders 20 times a second (sequenced loops also need the tick to schedule)
+setInterval(() => {
+  for (const row of live) {
+    try { Sound.applyPreview(row.item, row.voice, row.state); Sound.level(row.voice, Sound.board.gain, Sound.board.pan); } catch (e) { status.textContent = String(e); }
+  }
+}, 50);
+
+const vol = document.getElementById('vol'), pan = document.getElementById('pan'), distEl = document.getElementById('dist');
+vol.oninput = () => { Sound.vol = +vol.value / 10; Sound.muted = false; Sound.applyVolume(); };
+pan.oninput = () => { Sound.board.pan = +pan.value / 10; };
+distEl.oninput = () => { const k = 1 - +distEl.value / 10; Sound.board.gain = k * (0.3 + 0.7 * k); };
+vol.value = Math.round(Sound.vol * 10);
+document.getElementById('stopAll').onclick = () => {
+  for (const row of live) { Sound.stopPreview(row.voice); row.voice = null; const b = row.el.querySelector('button'); b.textContent = 'start'; b.classList.remove('on'); }
+  live.clear();
+};
+setInterval(() => {
+  if (Sound.dead) status.textContent = 'audio unavailable in this browser';
+  else if (Sound.ctx) status.textContent = 'audio ' + Sound.ctx.state + (Sound.errors ? '  errors: ' + Sound.errors : '');
+}, 500);
+
+// offline level check of every item → the meter column; resolves to a text table
+async function measureAll() {
+  const out = [];
+  for (const row of rows) {
+    const it = row.item, secs = it.loop ? 2 : 4;
+    try {
+      const m = await Sound.measure(it, secs);
+      if (!m) { row.meter.textContent = 'no OfflineAudioContext'; continue; }
+      const bad = m.nan || m.peak < -40 || m.peak > 6;
+      row.meter.textContent = `peak ${m.peak.toFixed(1)} dB  rms ${m.rms.toFixed(1)} dB`;
+      row.meter.classList.toggle('bad', bad);
+      out.push(`${bad ? '!!' : '  '} ${it.label.padEnd(38)} peak ${m.peak.toFixed(1).padStart(6)}  rms ${m.rms.toFixed(1).padStart(6)}`);
+    } catch (e) {
+      row.meter.textContent = 'ERROR ' + e; row.meter.classList.add('bad');
+      out.push(`!! ${it.label.padEnd(38)} ERROR ${e && e.message || e}`);
+    }
+  }
+  status.textContent = 'measured ' + rows.length + ' sounds';
+  return out.join('\n');
+}
+document.getElementById('measure').onclick = () => measureAll();
+if (location.hash === '#measure') window.measured = measureAll();
+</script>
+</body>
+</html>

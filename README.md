@@ -3,20 +3,28 @@
 A conceptual top-down crime game in plain HTML/JS, inspired by GTA 1 and 2 but drawn in a softer
 "modern retro" pixel-art style. All sprites are generated as editable Aseprite files.
 
-Scope for now: a 10×10-block island city in four regions, **no traffic and no pedestrians**, no
-sound. The focus is on how it plays and how it looks.
+Scope for now: three cities, an industrial zone and farmland on one big mainland (see below), with
+**no traffic and no pedestrians**. There are synthesised sound effects, but no radio or music yet. The focus is on how it plays and how it looks.
 
-## The city: four regions
+## The world: three cities and the country between them
 
-| Region | Where | What's there |
+A 768×768-tile mainland (12,288 px square) in a pastel sea. The full map, with every
+neighbourhood, street, landmark and coordinate, is in [docs/geography.md](docs/geography.md).
+
+| District | Where | What's there |
 |---|---|---|
-| **Downtown** | NW | glass skyscrapers (up to 16 floors, some with helipads), office clusters, the Pastel Mall on a double block, rows of shops with rooftop signs, a parking garage with cars on the top deck, parks and plazas. Busy curbs: taxis, sedans, police. |
-| **Ironworks** | NE | double-length blocks: warehouses with truck yards, container yards with forklifts, a tank farm with pipes, factories with smoking candy-striped chimneys, a truck depot. A **freight train** (a locomotive at each end, plus boxcar, tank car and container flat) shuttles along a railway with level crossings, and shoves anything on the tracks. Mostly trucks, tankers, flatbeds, mixers and garbage trucks. |
-| **Maple Hills** | SW | 2×2 super-blocks with curving **cul-de-sacs** (turning circle with a tree island), pitched-roof houses in five colours, lawns, driveways with the family car, pools, picket fences and mailboxes. The streets are nearly empty. |
-| **Golden Fields** | SE | big fields (wheat, corn, plowed soil, pasture with cows and hay bales) split by dirt tracks, farmsteads (house, barn, silos, haystack, tractor), an orchard, and two micro towns with a gas station, bar, diner and shop. A **river** runs from a pond to the sea, with bridges on the country roads (dashed centre lines, grass verges, no lamps) and a beach on the coast. Pickups, tractors and harvesters. |
+| **Major City** | NW | Downtown core of glass towers, offices, shops, the Pastel Mall and a garage, on wide **avenues** with parking bays, meters, ticket machines, parking signs, zebras, stop lines and **traffic lights**. **Central Park** (lake, winding paths, fountains) and the **police station** are in the core, and **Pastel Stadium** (a Beira-Rio style bowl under a white leaf roof, on a paved esplanade by the bay) is in the east suburbs. The suburb ring has cul-de-sacs and houses on quieter tree-lined **streets** with stop signs. You start here, next to the park. |
+| **Side City** | E | Same layout. The **PCTV tower** (15 floors, TV mast, dish farm) is downtown, **Shell Beach** (palms, boardwalk, umbrellas, lifeguard huts) runs down the east coast, and **Sunrise Marina** (piers, yachts, sailboats) is in a cove to the south-east. |
+| **Main City** | SW | Same layout. **Union Station** is at the end of the railway, **Mercy Hospital** has ambulances and a helipad, and the **port** on the south coast has a container yard, a quay where three gantry cranes work a full-size container ship moored alongside, and a mole sheltering the basin. |
+| **Ironworks** | centre | Long industrial blocks on cracked, patched **rough roads**: warehouses, container yards, a tank farm, factories with smoking chimneys, and the **freight yard** where the train starts. The boost garage sits by the bay. |
+| **North / West / South-East Farms** | N, W, SE | Big fields, farmsteads, an orchard, a pasture and a farm town (gas, diner, bar, shop) on each grid of **dirt roads** without sidewalks. |
+| **Pastel Airport** | SW coast | A wide north-south runway, taxiways, an apron with full-size airliners at the gates, a terminal, two hangars and a control tower. |
+| **Nature** | between | **Pastel Bay** cuts in from the north coast, crossed by the **Pastel Gate Bridge** (134-tile deck, two orange towers, sagging cables). There are also the Pinewood forests (NW), Clover Meadows, the Lilac River flowing from Heron Lake to the sea, the Amber Desert (SE: dunes, rocks, cacti, an oasis), Mirror and Willow lakes, rocky capes and five islands. |
 
-Blocks are merged by removing road segments (the road network is per-segment), which is how
-Ironworks gets its long blocks, Maple Hills its super-blocks and the farms their big fields.
+**Highways** (three lanes each way with shoulders) link every district. Where they cross water
+they become bridges. A **freight train** runs north-south between the Ironworks freight yard and
+Union Station, crossing roads at level crossings. The HUD shows the street you're on, and a toast
+names each neighbourhood as you enter it.
 
 ## Run
 
@@ -31,8 +39,12 @@ blocks local files, use `python3 -m http.server` and go to <http://localhost:800
 | Right click / C | cellphone | cellphone |
 | Space | shoot | handbrake (drift); tank: fire |
 | E / Enter | get into the nearest car | get out |
-| Q / Tab | switch weapon | |
+| Q / Tab | cycle the weapons you have | |
+| 1–7 | pick a weapon: 1 fists, 2 pistol, 3 Uzi, 4 shotgun, 5 bazooka, 6 grenades, 7 molotovs (only if you have ammo) | |
 | Z / X | | rotate the tank turret with the keyboard |
+| H | | horn (hold). Police cars and the ambulance: a tap toggles the siren, holding honks |
+| Space / Shift | | helicopter: climb / descend (W/S fly forward/back, A/D turn; exit only when landed) |
+| - / = / 0 | volume down / up / mute | |
 | O | toggle day ↔ night (fades through dusk) | |
 | N | cycle day, dusk and night | |
 | Mouse wheel | zoom (5 steps); scrolls messages over the phone | |
@@ -64,6 +76,7 @@ Gamepads work too: stick/d-pad, RT gas, LT brake, A/X handbrake or shoot, Y ente
   regular cars; trucks and buses park at the curb.
 - **Region vehicles:** tractors, forklifts and a combine harvester are drivable too. Fuel tankers
   go up in a chain of explosions along their whole length.
+- **Ambulance** (MEDIC ONE): a fast, tough emergency van. It's parked only at Mercy Hospital.
 - **Tank:** there's one M-9 Rhino, waiting on the sidewalk next to where you start. It's the
   strongest vehicle: collisions and small arms can't damage it, and explosions do only 35%. It
   pivots on the spot, the turret follows your mouse, and its cannon fires explosive shells. It
@@ -72,16 +85,56 @@ Gamepads work too: stick/d-pad, RT gas, LT brake, A/X handbrake or shoot, Y ente
   hitting a lamp post, hydrant or bin at speed (or the tank at any speed) knocks it over: lamps
   fall in the direction you hit them and go dark at night, hydrants burst into a water spray, and
   bins scatter rubbish. At walking pace they still block you. Trees are always solid.
-- Crates respawn every 45 s: cash, health, pistol, Uzi.
+- Crates respawn every 45 s: cash, health, pistol (+24), Uzi (+90). The other weapons are sold
+  only in gun stores.
+- **Weapons** (on foot only; aim with the mouse, fire with left click or Space). Thrown weapons land
+  at the crosshair (or 110 px ahead without a mouse). Explosions hurt you too if you're close.
+
+  | Weapon | Fire | Store: price / pack, max carried |
+  |---|---|---|
+  | Pistol | 9 damage, 0.32 s | $200 / 24, 240 |
+  | Uzi | 5 damage, 0.085 s (hold to spray) | $500 / 90, 450 |
+  | Shotgun | 6 pellets × 7 damage in a ±0.22 rad fan, 0.8 s, ~170 px range, shoves cars | $800 / 12, 60 |
+  | Bazooka | rocket at 320 px/s with a smoke trail. It explodes on a car or wall, or after 1.4 s (90 px blast, +50 to the car it hits), 1.2 s | $2000 / 5, 20 |
+  | Grenades | thrown up to 160 px in an arc, bounces off walls and cars, 2 s fuse, 75 px blast, 0.6 s | $600 / 5, 20 |
+  | Molotovs | thrown up to 150 px, shatters on landing or on a car/wall, leaves a 28 px fire patch for 6 s. Cars in it burn (the tank doesn't catch), and it hurts you, 0.7 s | $400 / 5, 20 |
+
+  Bullets and pellets don't hurt the tank; explosions and fire do 35%. When a weapon runs dry you
+  switch to the Uzi, shotgun or pistol (never to an explosive), else to your fists.
+- **Gun stores:** five, one per region: Pastel Arms (Major City, a short walk from the start),
+  Seabreeze Ammo (Side City), Union Firearms (Main City), Anvil Surplus (Ironworks) and Dusty Barrel
+  (Route 6, by the South-East Farms). Walk onto the glowing mat at the door to go in; the world
+  pauses while you shop. **W/S** or the mouse picks a weapon, **E / Enter** or a click on BUY buys a
+  pack, **Esc / Backspace** leaves. The card shows price, pack size, stat bars and what you carry;
+  BUY greys out with NOT ENOUGH CASH or FULL. Stores are red dots on the **M** map and in the GPS.
+- You start with **$10,000**, enough to buy every weapon twice.
 - Die and you're **WASTED**: you respawn at the park with your weapons lost and the multiplier
   reset to ×1.
+
+## Sound
+
+Every sound is synthesised live with the Web Audio API (`src/audio.js`), so there are no audio
+files and it still runs from `file://`. Audio starts on your first key press or click, because
+browsers block it before that.
+
+| Key | Effect |
+|---|---|
+| `-` / `=` | volume down / up in 10% steps (also unmutes) |
+| `0` | mute / unmute |
+| `H` | horn (hold). Police cars and the ambulance: a tap toggles the siren |
+
+Volume and mute are saved in the browser. Sounds are positional, so they pan left and right
+and fade with distance from the centre of the screen. They go silent while paused, and inside a
+gun store only the street outside stays faintly audible.
+`soundboard.html` lists every sound with play and start/stop buttons, plus engine speed and
+throttle sliders, and **measure levels** shows each sound's peak and RMS.
 
 ## How it's built
 
 ```
 index.html          boot + script order
 src/core.js         math, RNG, sprite atlas, bitmap font, keyboard/gamepad input
-src/city.js         city generator: districts, block types (city/park/plaza/lot/tower), props
+src/city.js         world generator: terrain, grids, road profiles, highways, landmarks, names
 src/render.js       baked ground, oblique pseudo-3D buildings, trees/lamps, lighting
 src/entities.js     cars (arcade drift physics), player, collisions, particles
 src/phone.js        cellphone: contacts, calls, messages, GPS
@@ -89,7 +142,12 @@ src/missions.js     jobs (payphone or cellphone)
 src/game.js         rules, camera, HUD, main loop, #demo hook
 art/*.aseprite      sprite sources (edit these in Aseprite)
 assets/             exported sheets + atlas.js (generated — don't edit)
-tools/              Aseprite Lua generator/exporter + art.sh wrapper
+tools/              Aseprite Lua generator/exporter, art.sh wrapper, check.js, shot.sh
+CLAUDE.md           Claude Code entry point: code map + how .claude/ is organised
+.claude/rules/      project rules (scope, runtime, testing, art pipeline, rendering, agents, decisions, git)
+.claude/agents/     subagents: pixel, vehicles, weapons, geo, sound, radio (radio on hold)
+.claude/agent-memory/  each agent's decision log (+ coordinator's cross-cutting decisions)
+.claude/skills/     /commit
 refs/               style references
 ```
 
@@ -156,20 +214,42 @@ per-tag frame order. The palette is at `art/pastel-city.gpl`.
 | player | 16×16 | idle, walk (4), shoot, dead |
 | props | 16×16 | phone, lamp, crates, roof clutter, markers, HUD icons, cursor/crosshair, phone app icons, hay bale, mailbox, pallet, barrel, fuel pump, buffer stop, cow |
 | big | 48×48 | three tree types, fountain, water tank, helipad, mission marker, shrubs, silo, fuel tank, pool, smokestack, haystack |
+| air | 112×112 | airliner, prop plane, helicopter (2) |
+| ships | 64×224 | container ship, yacht, sailboat, motorboat, gantry crane |
 | ui | 112×176 | the cellphone; the screen rect and button hit areas are listed in `PHONE` in src/phone.js |
 | fx | 48×48 | explosion (8), smoke (4), fire (4) |
 | font | 6×8 | bitmap font (order in `FONT_CHARS`) |
 
 ## Testing hook
 
-`index.html#demo&drive=60&time=2&boom&mission=torch&shoot=100&map&at=7,2&tank=0.6&phone=gps&mouse=900,200&rampage=6,4&look=24,10`
-(`at=bx,by` jumps to a block, `look=tx,ty` locks the camera on a tile of that block) skips the title and runs a
-scripted scenario, which is handy for headless screenshots:
+`index.html#demo&...` skips the title and runs a scripted scenario, which is handy for headless
+screenshots. Parameters combine with `&`:
+
+| Param | Effect |
+|---|---|
+| `goto=<place>` | jump there and lock the camera. Any landmark, district, neighbourhood, street, lake or island name works (case and spaces ignored), e.g. `goto=Pastel Gate Bridge`, `goto=Stadium`, `goto=PCTV Tower`, `goto=Hospital`, `goto=Union Station`, `goto=Airport`, `goto=Port`, `goto=Marina`, `goto=Beach`, `goto=Central Park`, `goto=Police Station`, `goto=Freight Yard`, `goto=Spawn`. The full list is in `G.city.places` / docs/geography.md. |
+| `time=1` / `time=2` | dusk / night |
+| `drive=N` | enter the starter car and drive for N ticks (`&crash` steers into things) |
+| `boom` | blow up a nearby car |
+| `mission=delivery\|boost\|torch\|rush` | start that job |
+| `shoot=N` | fire the Uzi at the nearest car for N ticks |
+| `wfire=<id>,<ang\|car>,<n>[,<ticks>]` | take weapon `<id>` (`pistol uzi shotgun bazooka grenade molotov`) with full ammo, face `ang` radians (0 = up, clockwise) or the nearest parked car (throws land on it), fire `n` times at the weapon's rate, then run `ticks` more after the last shot (default one cooldown; `-1` = none). E.g. `goto=Airport&wfire=bazooka,4.4,1,-1` catches a rocket in flight |
+| `arsenal` | full ammo for every weapon |
+| `cash=N` | set your money |
+| `shop=i[&sel=j]` | stand on gun store i's mat (0-4) with the store open, row j selected |
+| `cam=tx,ty` | centre the camera on a tile, e.g. `goto=Stadium&cam=328,158` frames the whole stadium |
+| `heli=N` | spawn a helicopter, climb for 2.5 s, fly forward for N ticks (HUD shows altitude/speed/rotor) |
+| `tank=a` | get in the tank, turret at angle a, fire once |
+| `phone=home\|contacts\|messages\|gps\|music\|incoming` | open the cellphone (`&call=i` calls contact i) |
+| `mouse=x,y` | fake a mouse position (screen px) |
+| `map` | open the map |
 
 ```sh
-firefox --headless --screenshot out.png --window-size=1280,720 "file://$PWD/index.html#demo&drive=60"
+node tools/check.js                        # every script loads cleanly in one scope
+tools/shot.sh out.png 'demo&drive=60'      # headless Firefox screenshot of a scenario
+tools/shot.sh g.png '' gallery.html        # screenshot of the asset gallery (set SHOT_SIZE=1400,9000)
 ```
 
 ## Later
 
-Sound and music, traffic and pedestrians, police and wanted levels, more mission types, saving.
+Radio and music, traffic and pedestrians, police and wanted levels, more mission types, saving.

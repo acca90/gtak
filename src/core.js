@@ -36,7 +36,7 @@ function mkCanvas(w, h) {
 // Palette mirror of tools/generate-art.lua, for code-drawn pixels.
 const PAL = {
   K: '#1a1c2c', k: '#2b2d42', d: '#4f5168', m: '#7f8198', l: '#b8b8c8', x: '#f2efe6',
-  a: '#3b3f58', A: '#464b66', b: '#565c7a', t: '#c9b79c', T: '#e0d2b8',
+  a: '#3b3f58', A: '#464b66', b: '#565c7a', s: '#9c8b75', S: '#b5a288', t: '#c9b79c', T: '#e0d2b8', i: '#e8e4d8',
   g: '#2a5446', G: '#3f7d5c', h: '#58a06f', H: '#86c28a',
   w: '#24466a', W: '#32658c', v: '#5aa3c4', V: '#a8dcea',
   e: '#2f5d62', E: '#3f7f7a', f: '#5fa39a', F: '#9fd4c4',
@@ -136,12 +136,15 @@ const KEYMAP = {
   left: ['ArrowLeft', 'KeyA'], right: ['ArrowRight', 'KeyD'],
   fire: ['Space'], shoot: ['Space', 'mouse0'], click: ['mouse0'], phone: ['mouse2', 'KeyC'],
   use: ['KeyE', 'Enter', 'KeyF'], weapon: ['KeyQ', 'Tab'], daynight: ['KeyO'],
+  horn: ['KeyH'], descend: ['ShiftLeft', 'ShiftRight'], volDown: ['Minus', 'NumpadSubtract'], volUp: ['Equal', 'NumpadAdd'], mute: ['Digit0', 'Numpad0'],
+  slot1: ['Digit1', 'Numpad1'], slot2: ['Digit2', 'Numpad2'], slot3: ['Digit3', 'Numpad3'], slot4: ['Digit4', 'Numpad4'],
+  slot5: ['Digit5', 'Numpad5'], slot6: ['Digit6', 'Numpad6'], slot7: ['Digit7', 'Numpad7'], back: ['Backspace'],
   time: ['KeyN'], map: ['KeyM'], turretL: ['KeyZ', 'Comma'], turretR: ['KeyX', 'Period'], pause: ['KeyP', 'Escape'], start: ['Enter', 'Space'],
 };
 // standard gamepad mapping
 const PADMAP = {
   up: [12], down: [13], left: [14], right: [15],
-  fire: [0, 2], shoot: [2], use: [3], weapon: [4, 5], time: [8], pause: [9], start: [9, 0],
+  fire: [0, 2], shoot: [2], use: [3], horn: [10], weapon: [4, 5], time: [8], pause: [9], start: [9, 0],
   gas: [7], brake: [6], map: [1],
 };
 

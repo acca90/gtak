@@ -1,0 +1,78 @@
+{ "frames": [
+   {
+    "filename": "shop 0.aseprite",
+    "frame": { "x": 0, "y": 0, "w": 64, "h": 32 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 64, "h": 32 },
+    "sourceSize": { "w": 64, "h": 32 },
+    "duration": 100
+   },
+   {
+    "filename": "shop 1.aseprite",
+    "frame": { "x": 64, "y": 0, "w": 64, "h": 32 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 64, "h": 32 },
+    "sourceSize": { "w": 64, "h": 32 },
+    "duration": 100
+   },
+   {
+    "filename": "shop 2.aseprite",
+    "frame": { "x": 128, "y": 0, "w": 64, "h": 32 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 64, "h": 32 },
+    "sourceSize": { "w": 64, "h": 32 },
+    "duration": 100
+   },
+   {
+    "filename": "shop 3.aseprite",
+    "frame": { "x": 192, "y": 0, "w": 64, "h": 32 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 64, "h": 32 },
+    "sourceSize": { "w": 64, "h": 32 },
+    "duration": 100
+   },
+   {
+    "filename": "shop 4.aseprite",
+    "frame": { "x": 256, "y": 0, "w": 64, "h": 32 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 64, "h": 32 },
+    "sourceSize": { "w": 64, "h": 32 },
+    "duration": 100
+   },
+   {
+    "filename": "shop 5.aseprite",
+    "frame": { "x": 320, "y": 0, "w": 64, "h": 32 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 64, "h": 32 },
+    "sourceSize": { "w": 64, "h": 32 },
+    "duration": 100
+   }
+ ],
+ "meta": {
+  "app": "http://www.aseprite.org/",
+  "version": "1.3.18.6-x64",
+  "image": "shop.png",
+  "format": "RGBA8888",
+  "size": { "w": 384, "h": 32 },
+  "scale": "1",
+  "frameTags": [
+   { "name": "shop_pistol", "from": 0, "to": 0, "direction": "forward", "color": "#000000ff" },
+   { "name": "shop_uzi", "from": 1, "to": 1, "direction": "forward", "color": "#000000ff" },
+   { "name": "shop_shotgun", "from": 2, "to": 2, "direction": "forward", "color": "#000000ff" },
+   { "name": "shop_bazooka", "from": 3, "to": 3, "direction": "forward", "color": "#000000ff" },
+   { "name": "shop_grenade", "from": 4, "to": 4, "direction": "forward", "color": "#000000ff" },
+   { "name": "shop_molotov", "from": 5, "to": 5, "direction": "forward", "color": "#000000ff" }
+  ],
+  "layers": [
+   { "name": "shop", "opacity": 255, "blendMode": "normal" }
+  ],
+  "slices": [
+  ]
+ }
+}

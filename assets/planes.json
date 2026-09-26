@@ -1,0 +1,38 @@
+{ "frames": [
+   {
+    "filename": "planes 0.aseprite",
+    "frame": { "x": 0, "y": 0, "w": 288, "h": 288 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 288, "h": 288 },
+    "sourceSize": { "w": 288, "h": 288 },
+    "duration": 100
+   },
+   {
+    "filename": "planes 1.aseprite",
+    "frame": { "x": 288, "y": 0, "w": 288, "h": 288 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 288, "h": 288 },
+    "sourceSize": { "w": 288, "h": 288 },
+    "duration": 100
+   }
+ ],
+ "meta": {
+  "app": "http://www.aseprite.org/",
+  "version": "1.3.18.6-x64",
+  "image": "planes.png",
+  "format": "RGBA8888",
+  "size": { "w": 576, "h": 288 },
+  "scale": "1",
+  "frameTags": [
+   { "name": "airliner", "from": 0, "to": 0, "direction": "forward", "color": "#000000ff" },
+   { "name": "propplane", "from": 1, "to": 1, "direction": "forward", "color": "#000000ff" }
+  ],
+  "layers": [
+   { "name": "planes", "opacity": 255, "blendMode": "normal" }
+  ],
+  "slices": [
+  ]
+ }
+}

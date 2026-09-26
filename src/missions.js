@@ -83,6 +83,7 @@ const MISSION_TYPES = {
       if (p.car && dist(p.px, p.py, t.x, t.y) < 38) {
         m.i++;
         Parts.sparks(t.x, t.y, 10, PAL.q);
+        Sound.ui('checkpoint');
         if (m.i >= m.points.length) { m.reward += Math.round(m.timer) * 60; Missions.complete(); }
         else { m.timer += 12; Game.toast(`CHECKPOINT ${m.i}/5  +12S`, 1.5); }
       }
@@ -162,6 +163,7 @@ const Missions = {
       type = this.bag.pop();
     }
     this.active = { type, from: contact ? contact.name : 'PAYPHONE' };
+    Sound.ui('mission');
     G.waypoint = null;
     MISSION_TYPES[type].begin(this.active);
   },
@@ -173,6 +175,7 @@ const Missions = {
     Game.earn(m.reward);
     G.banner = { text: 'MISSION COMPLETE', sub: '$' + pay + (sub ? '   ' + sub : '') + '   MULTIPLIER UP', color: PAL.q, t: 3.5 };
     G.mult = Math.min(9, G.mult + 1);
+    Sound.ui('complete');
     if (m.car) m.car.target = false;
     this.active = null;
     this.cooldown = 4;
@@ -182,6 +185,7 @@ const Missions = {
     const m = this.active;
     if (!m) return;
     if (!silent) G.banner = { text: 'MISSION FAILED', sub: reason, color: PAL.z, t: 3 };
+    if (!silent) Sound.ui('fail');
     if (m.car) m.car.target = false;
     this.active = null;
     this.cooldown = 4;

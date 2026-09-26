@@ -1,5 +1,7 @@
 # third-party style references (not ours to redistribute)
-refs/
+refs/*
+# ...except the user's own layout sketch
+!refs/city.png
 # editor / OS noise
 .DS_Store
 *.swp

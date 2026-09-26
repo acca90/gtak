@@ -14,7 +14,8 @@
 // cornice band at the top. Windows only change when k steps, and then all at once.
 
 const PARALLAX = 1 / 850;
-const CHUNK = 1024;
+const CHUNK = 512;           // ground chunk size (px), baked on demand
+const CHUNK_CACHE = 64;      // baked chunks kept in memory (LRU)
 const MODULE = 32;
 
 const TIMES = [
@@ -22,6 +23,33 @@ const TIMES = [
   { name: 'DUSK', ambient: '#e8aaa0', lights: 0.45, glow: 0.55 },
   { name: 'NIGHT', ambient: '#2f3572', lights: 1, glow: 1 },
 ];
+
+// Buckets items by every grid cell their rectangle covers; query returns each item once.
+class SpatialIndex {
+  constructor(cell) { this.cell = cell; this.map = new Map(); this.stamp = 0; }
+  add(item, x0, y0, x1, y1) {
+    const c = this.cell;
+    for (let cy = Math.floor(y0 / c); cy <= Math.floor(y1 / c); cy++) {
+      for (let cx = Math.floor(x0 / c); cx <= Math.floor(x1 / c); cx++) {
+        const k = cx + ',' + cy;
+        let a = this.map.get(k);
+        if (!a) this.map.set(k, (a = []));
+        a.push(item);
+      }
+    }
+    return this;
+  }
+  query(x0, y0, x1, y1) {
+    const c = this.cell, out = [], st = ++this.stamp;
+    for (let cy = Math.floor(y0 / c); cy <= Math.floor(y1 / c); cy++) {
+      for (let cx = Math.floor(x0 / c); cx <= Math.floor(x1 / c); cx++) {
+        const a = this.map.get(cx + ',' + cy);
+        if (a) for (const it of a) if (it._q !== st) { it._q = st; out.push(it); }
+      }
+    }
+    return out;
+  }
+}
 
 const Render = {
   frameNo: 0,
@@ -31,76 +59,96 @@ const Render = {
     this._squash = {};
     this._lights = {};
     this.lightCv = null;
-    this.bakeGround();
+    this.chunkCache = new Map();
+    this.decals = new Map();
+    this.buildIndexes();
     this.bakeMinimap();
     this.layoutFacades();
   },
 
-  // ------------------------------------------------------------ ground --
-  bakeGround() {
+  // spatial indexes so a big world only touches what is near the camera
+  buildIndexes() {
     const c = this.city;
-    const WP = c.W * TILE, HP = c.H * TILE;
-    this.chunks = [];
-    for (let cy = 0; cy * CHUNK < HP; cy++) {
-      const row = [];
-      for (let cx = 0; cx * CHUNK < WP; cx++) row.push(mkCanvas(Math.min(CHUNK, WP - cx * CHUNK), Math.min(CHUNK, HP - cy * CHUNK)));
-      this.chunks.push(row);
+    c.sprites = c.sprites || []; c.talls = c.talls || []; c.trafficLights = c.trafficLights || []; c.cables = c.cables || [];
+    const I = (this.idx = {
+      buildings: new SpatialIndex(256), trees: new SpatialIndex(256), lamps: new SpatialIndex(256),
+      props: new SpatialIndex(256), talls: new SpatialIndex(256), sprites: new SpatialIndex(256), signals: new SpatialIndex(256),
+      cables: new SpatialIndex(256), paints: new SpatialIndex(CHUNK), shadows: new SpatialIndex(CHUNK), baked: new SpatialIndex(CHUNK),
+    });
+    for (const b of c.buildings) {
+      I.buildings.add(b, b.x, b.y, b.x + b.w, b.y + b.h);
+      const L = Math.round(b.height * (b.overhang ? 0.08 : 0.22));
+      I.shadows.add({ t: 'b', b, L }, b.x, b.y, b.x + b.w + L, b.y + b.h + L);
     }
-    const tiles = Assets.sheets.tiles;
-    this.paint(0, 0, WP, HP, (ctx) => {
-      for (let y = 0; y < c.H; y++) {
-        for (let x = 0; x < c.W; x++) {
-          const f = c.frame[y * c.W + x];
-          if (f >= 0) ctx.drawImage(tiles.img, f * 16, 0, 16, 16, x * 16, y * 16, 16, 16);
-        }
-      }
-    }, true);
+    for (const t of c.trees) { I.trees.add(t, t.x - 24, t.y - 24, t.x + 24, t.y + 24); I.shadows.add({ t: 't', o: t }, t.x - 12, t.y - 12, t.x + 22, t.y + 20); }
+    for (const l of c.lamps) I.lamps.add(l, l.x, l.y, l.x, l.y);
+    for (const t of c.talls) {
+      I.talls.add(t, t.x - 40, t.y - 40, t.x + 40, t.y + 40);
+      const L = Math.round(t.h * 0.22);
+      I.shadows.add({ t: 'tall', o: t, L }, t.x - t.r, t.y - t.r, t.x + L + t.r, t.y + L + t.r);
+    }
+    // index each free sprite by its real cell size (a 976-px ship must draw while its centre is off-screen)
+    for (const s of c.sprites) { const S = Assets.sheets[s.sheet], r = Math.max(120, S && S.w ? Math.hypot(S.w, S.h) / 2 + 16 : 0); I.sprites.add(s, s.x - r, s.y - r, s.x + r, s.y + r); }
+    for (const s of c.trafficLights) I.signals.add(s, s.x, s.y, s.x, s.y);
+    for (const k of c.cables) I.cables.add(k, Math.min(k.ax, k.bx), Math.min(k.ay, k.by), Math.max(k.ax, k.bx), Math.max(k.ay, k.by));
+    for (const op of c.paints) { const b = this.paintBox(op); I.paints.add(op, b[0], b[1], b[0] + b[2], b[1] + b[3]); }
+    for (const p of c.props) {
+      if (p.sprite === 'bench') I.baked.add(p, p.x - 8, p.y - 8, p.x + 8, p.y + 8);
+      else I.props.add(p, p.x - 24, p.y - 24, p.x + 24, p.y + 24);
+    }
+  },
+
+  // ------------------------------------------------------------ ground --
+  // The ground is baked lazily in CHUNK-sized canvases (LRU cache). Everything
+  // painted later (skids, scorches, fallen lamps) is also remembered per chunk
+  // so an evicted chunk comes back with its marks.
+  chunk(cx, cy) {
+    const key = cx + ',' + cy;
+    let cv = this.chunkCache.get(key);
+    if (cv) { this.chunkCache.delete(key); this.chunkCache.set(key, cv); return cv; }
+    cv = this.bakeChunk(cx, cy);
+    this.chunkCache.set(key, cv);
+    if (this.chunkCache.size > CHUNK_CACHE) this.chunkCache.delete(this.chunkCache.keys().next().value);
+    return cv;
+  },
+
+  bakeChunk(cx, cy) {
+    const c = this.city, X = cx * CHUNK, Y = cy * CHUNK;
+    const cv = mkCanvas(CHUNK, CHUNK);
+    const ctx = cv.ctx;
+    ctx.translate(-X, -Y);
+    const tiles = Assets.sheets.tiles.img;
+    const tx0 = Math.max(0, Math.floor(X / TILE)), ty0 = Math.max(0, Math.floor(Y / TILE));
+    const tx1 = Math.min(c.W - 1, Math.floor((X + CHUNK - 1) / TILE)), ty1 = Math.min(c.H - 1, Math.floor((Y + CHUNK - 1) / TILE));
+    for (let y = ty0; y <= ty1; y++) for (let x = tx0; x <= tx1; x++) {
+      const f = c.frame[y * c.W + x];
+      if (f >= 0) ctx.drawImage(tiles, f * 16, 0, 16, 16, x * 16, y * 16, 16, 16);
+    }
     // quay shadow on the water
-    this.paint(0, 0, WP, HP, (ctx) => {
-      ctx.fillStyle = 'rgba(20,24,48,0.45)';
-      for (let y = 1; y < c.H; y++) {
-        for (let x = 1; x < c.W; x++) {
-          if (c.kind[y * c.W + x] !== KIND.WATER) continue;
-          if (c.kind[(y - 1) * c.W + x] !== KIND.WATER) ctx.fillRect(x * 16, y * 16, 16, 5);
-          if (c.kind[y * c.W + x - 1] !== KIND.WATER) ctx.fillRect(x * 16, y * 16, 4, 16);
-        }
-      }
-    }, true);
-    // painted ground details: cul-de-sacs, fences, pools, pipes
-    for (const op of c.paints) {
-      const box = this.paintBox(op);
-      this.paint(box[0], box[1], box[2], box[3], (ctx) => this.paintOp(ctx, op));
+    ctx.fillStyle = 'rgba(20,24,48,0.45)';
+    for (let y = Math.max(1, ty0); y <= ty1; y++) for (let x = Math.max(1, tx0); x <= tx1; x++) {
+      if (c.kind[y * c.W + x] !== KIND.WATER) continue;
+      if (c.kind[(y - 1) * c.W + x] !== KIND.WATER) ctx.fillRect(x * 16, y * 16, 16, 5);
+      if (c.kind[y * c.W + x - 1] !== KIND.WATER) ctx.fillRect(x * 16, y * 16, 4, 16);
     }
-    // cast shadows (sun from the top-left): drawn solid per chunk, then blended once
-    for (let cy = 0; cy < this.chunks.length; cy++) {
-      for (let cx = 0; cx < this.chunks[cy].length; cx++) {
-        const g = this.chunks[cy][cx];
-        const sh = mkCanvas(g.width, g.height);
-        const ctx = sh.ctx;
-        ctx.translate(-cx * CHUNK, -cy * CHUNK);
-        ctx.fillStyle = '#12142e';
-        for (const b of c.buildings) {
-          const L = Math.round(b.height * (b.overhang ? 0.08 : 0.22));
-          if (b.x > (cx + 1) * CHUNK + 10 || b.y > (cy + 1) * CHUNK + 10 || b.x + b.w + L < cx * CHUNK || b.y + b.h + L < cy * CHUNK) continue;
-          for (let d = 0; d <= L; d++) ctx.fillRect(b.x + Math.round(d * 0.8), b.y + Math.round(d * 0.6), b.w, b.h);
-        }
-        for (const t of c.trees) {
-          if (Math.abs(t.x - (cx + 0.5) * CHUNK) > CHUNK || Math.abs(t.y - (cy + 0.5) * CHUNK) > CHUNK) continue;
-          for (let d = 0; d <= 8; d++) this._disc(ctx, t.x + d, t.y + d * 0.8, 12);
-        }
-        for (const t of c.talls) {
-          if (Math.abs(t.x - (cx + 0.5) * CHUNK) > CHUNK || Math.abs(t.y - (cy + 0.5) * CHUNK) > CHUNK) continue;
-          const L = Math.round(t.h * 0.22);
-          for (let d = 0; d <= L; d++) this._disc(ctx, t.x + d * 0.8, t.y + d * 0.6, t.r);
-        }
-        g.ctx.globalAlpha = 0.3;
-        g.ctx.drawImage(sh, 0, 0);
-        g.ctx.globalAlpha = 1;
-      }
+    const box = [X, Y, X + CHUNK, Y + CHUNK];
+    for (const op of this.idx.paints.query(...box)) this.paintOp(ctx, op);
+    // cast shadows (sun from the top-left): drawn solid, then blended once
+    const sh = mkCanvas(CHUNK, CHUNK), sx = sh.ctx;
+    sx.translate(-X, -Y);
+    sx.fillStyle = '#12142e';
+    for (const it of this.idx.shadows.query(...box)) {
+      if (it.t === 'b') { const b = it.b; for (let d = 0; d <= it.L; d++) sx.fillRect(b.x + Math.round(d * 0.8), b.y + Math.round(d * 0.6), b.w, b.h); }
+      else if (it.t === 't') for (let d = 0; d <= 8; d++) this._disc(sx, it.o.x + d, it.o.y + d * 0.8, 12);
+      else for (let d = 0; d <= it.L; d++) this._disc(sx, it.o.x + d * 0.8, it.o.y + d * 0.6, it.o.r);
     }
-    this.paint(0, 0, WP, HP, (ctx) => {
-      for (const p of c.props) if (p.sprite === 'bench') Assets.draw(ctx, 'props', Assets.frame('props', 'bench'), p.x - 8, p.y - 8);
-    }, true);
+    ctx.globalAlpha = 0.3;
+    ctx.drawImage(sh, X, Y);
+    ctx.globalAlpha = 1;
+    for (const p of this.idx.baked.query(...box)) Assets.draw(ctx, 'props', Assets.frame('props', p.sprite), p.x - 8, p.y - 8);
+    for (const fn of this.decals.get(cx + ',' + cy) || []) fn(ctx);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    return cv;
   },
 
   paintBox(op) {
@@ -167,28 +215,35 @@ const Render = {
     }
   },
 
-  // run fn(ctx) in world coordinates on every chunk the rect touches
-  paint(x, y, w, h, fn, all) {
-    for (let cy = 0; cy < this.chunks.length; cy++) {
-      for (let cx = 0; cx < this.chunks[cy].length; cx++) {
-        const X = cx * CHUNK, Y = cy * CHUNK;
-        if (!all && (x > X + CHUNK || y > Y + CHUNK || x + w < X || y + h < Y)) continue;
-        const ctx = this.chunks[cy][cx].ctx;
-        ctx.save();
-        ctx.translate(-X, -Y);
-        fn(ctx);
-        ctx.restore();
+  // paint fn(ctx) (world coordinates) onto the ground, now and whenever the
+  // chunks it touches are re-baked
+  paint(x, y, w, h, fn) {
+    for (let cy = Math.floor(y / CHUNK); cy <= Math.floor((y + h) / CHUNK); cy++) {
+      for (let cx = Math.floor(x / CHUNK); cx <= Math.floor((x + w) / CHUNK); cx++) {
+        const key = cx + ',' + cy;
+        let list = this.decals.get(key);
+        if (!list) this.decals.set(key, (list = []));
+        list.push(fn);
+        if (list.length > 800) list.splice(0, list.length - 800);
+        const cv = this.chunkCache.get(key);
+        if (!cv) continue;
+        cv.ctx.save();
+        cv.ctx.translate(-cx * CHUNK, -cy * CHUNK);
+        fn(cv.ctx);
+        cv.ctx.restore();
       }
     }
   },
 
   drawGround(ctx, cam) {
-    const cx0 = Math.floor(cam.x / CHUNK), cy0 = Math.floor(cam.y / CHUNK);
-    const cx1 = Math.floor((cam.x + cam.w) / CHUNK), cy1 = Math.floor((cam.y + cam.h) / CHUNK);
-    for (let cy = Math.max(0, cy0); cy <= Math.min(this.chunks.length - 1, cy1); cy++) {
-      for (let cx = Math.max(0, cx0); cx <= Math.min(this.chunks[cy].length - 1, cx1); cx++) {
-        ctx.drawImage(this.chunks[cy][cx], cx * CHUNK - cam.x, cy * CHUNK - cam.y);
-      }
+    const c = this.city;
+    const maxX = Math.ceil((c.W * TILE) / CHUNK) - 1, maxY = Math.ceil((c.H * TILE) / CHUNK) - 1;
+    const cx0 = Math.max(0, Math.floor(cam.x / CHUNK)), cy0 = Math.max(0, Math.floor(cam.y / CHUNK));
+    const cx1 = Math.min(maxX, Math.floor((cam.x + cam.w) / CHUNK)), cy1 = Math.min(maxY, Math.floor((cam.y + cam.h) / CHUNK));
+    for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) ctx.drawImage(this.chunk(cx, cy), cx * CHUNK - cam.x, cy * CHUNK - cam.y);
+    // warm up one neighbouring chunk per frame so driving into new ground doesn't stall
+    for (let cy = Math.max(0, cy0 - 1); cy <= Math.min(maxY, cy1 + 1); cy++) for (let cx = Math.max(0, cx0 - 1); cx <= Math.min(maxX, cx1 + 1); cx++) {
+      if (!this.chunkCache.has(cx + ',' + cy)) { this.chunk(cx, cy); return; }
     }
   },
 
@@ -244,24 +299,28 @@ const Render = {
     const m = (this.minimap = mkCanvas(c.W, c.H));
     const img = m.ctx.createImageData(c.W, c.H);
     const hex = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
-    const colors = {
+    const colors = {};
+    if (typeof KIND_COLOR !== 'undefined') for (const k in KIND_COLOR) colors[k] = hex(KIND_COLOR[k]);
+    const fallback = {
       [KIND.WATER]: hex(PAL.w), [KIND.ROAD]: hex(PAL.d), [KIND.WALK]: hex(PAL.t), [KIND.GRASS]: hex(PAL.G),
       [KIND.PATH]: hex(PAL.o), [KIND.PLAZA]: hex(PAL.p), [KIND.LOT]: hex(PAL.b), [KIND.BUILDING]: hex(PAL.l),
       [KIND.RAIL]: hex(PAL.n), [KIND.BRIDGE]: hex(PAL.m), [KIND.FIELD]: hex(PAL.L), [KIND.DIRT]: hex(PAL.o),
       [KIND.VERGE]: hex(PAL.h), [KIND.LAWN]: hex(PAL.h), [KIND.CONCRETE]: hex(PAL.l), [KIND.SAND]: hex(PAL.T),
     };
+    for (const k in fallback) if (!colors[k]) colors[k] = fallback[k];
     const styleColor = {
       teal: hex(PAL.f), rose: hex(PAL.R), cream: hex(PAL.Y), plum: hex(PAL.U), brick: hex(PAL.N), mint: hex(PAL.h),
       metal: hex(PAL.x), rust: hex(PAL.N), glass: hex(PAL.B), mall: hex(PAL.x), deck: hex(PAL.m), canopy: hex(PAL.z),
       red: hex(PAL.R), slate: hex(PAL.d), green: hex(PAL.G), brown: hex(PAL.N), barn: hex(PAL.r),
       container_red: hex(PAL.R), container_blue: hex(PAL.B), container_teal: hex(PAL.E), container_yellow: hex(PAL.L),
+      stands: hex(PAL.R), arch: hex(PAL.C), hospital: hex(PAL.x), police: hex(PAL.B), hangar: hex(PAL.l), stadium: hex(PAL.x),
     };
     for (let i = 0; i < c.W * c.H; i++) {
-      const col = colors[c.kind[i]];
+      const col = colors[c.kind[i]] || hex(PAL.m);
       img.data.set([col[0], col[1], col[2], 255], i * 4);
     }
     for (const b of c.buildings) {
-      const col = styleColor[b.roof.style || b.roof.mat || b.roof.tag] || hex(PAL.l);
+      const col = styleColor[b.roof.style || b.roof.mat || b.roof.tag || b.roof.type] || hex(PAL.l);
       for (let y = b.ty; y < b.ty + b.th; y++) for (let x = b.tx; x < b.tx + b.tw; x++) {
         const edge = x === b.tx || y === b.ty || x === b.tx + b.tw - 1 || y === b.ty + b.th - 1;
         const k = edge ? 0.7 : 1;
@@ -379,8 +438,13 @@ const Render = {
   makeRoof(b, R) {
     let cv;
     if (b.roof.type === 'pitched') cv = this.pitchedRoof(b, R);
+    else if (b.roof.type === 'stadium') cv = this.stadiumRoof(b);
     else if (b.roof.type === 'sprite') cv = this.spriteRoof(b);
     else cv = this.flatRoof(b, R);
+    for (const rp of b.roofProps || []) { // e.g. satellite dishes, baked flat into the roof
+      const sheet = rp.sheet || 'big', sh = Assets.sheets[sheet];
+      Assets.draw(cv.ctx, sheet, Assets.frame(sheet, rp.tag, rp.frame || 0), rp.x - sh.w / 2, rp.y - sh.h / 2);
+    }
     if (b.sign) this.drawSign(cv.ctx, b, false);
     return cv;
   },
@@ -423,6 +487,107 @@ const Render = {
     return cv;
   },
 
+  // Beira-Rio style stadium seen from above: an oval white "leaf" roof ring over red
+  // stands, the pitch open in the middle, floodlights along the roof's inner rim and a
+  // paved esplanade in the corners of the footprint. Geometry is shared with the glow.
+  stadiumGeom(b) {
+    if (b.sgeo) return b.sgeo;
+    const A = b.w / 2 - 6, B = b.h / 2 - 6;                 // outer roof edge (scallops bite in)
+    const ring = Math.round(Math.min(A, B) * 0.3);
+    const a = A - ring, bi = B - ring;                      // inner opening
+    const hw = Math.round(a * 0.66), hh = Math.round(bi * 0.6);   // pitch half size
+    const N = Math.max(24, Math.round((Math.PI * (A + B)) / 20));  // leaves around the ring
+    b.sgeo = { cx: b.w / 2, cy: b.h / 2, A, B, a, bi, hw, hh, N };
+    return b.sgeo;
+  },
+
+  stadiumRoof(b) {
+    const g = this.stadiumGeom(b), { cx, cy, A, B, a, bi, hw, hh, N } = g;
+    const W = b.w, H = b.h, cv = mkCanvas(W, H), ctx = cv.ctx;
+    const TAU = Math.PI * 2, frac = (v) => v - Math.floor(v);
+    const roofAt = (x, y) => {                              // leaf-roof mask with scalloped outer edge
+      const dx = x + 0.5 - cx, dy = y + 0.5 - cy;
+      const eI = (dx / a) ** 2 + (dy / bi) ** 2;
+      if (eI <= 1) return false;
+      const s = frac((Math.atan2(dy / B, dx / A) / TAU) * N);
+      return Math.sqrt((dx / A) ** 2 + (dy / B) ** 2) <= 1 - 0.03 * (1 - Math.sin(Math.PI * s));
+    };
+    const buf = new Array(W * H), roof = new Uint8Array(W * H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = y * W + x, dx = x + 0.5 - cx, dy = y + 0.5 - cy;
+      const eO = (dx / A) ** 2 + (dy / B) ** 2, eI = (dx / a) ** 2 + (dy / bi) ** 2;
+      let c;
+      if (roofAt(x, y)) {
+        roof[i] = 1;
+        const rin = Math.sqrt(eO / eI), t = (Math.sqrt(eO) - rin) / (1 - rin);   // 0 inner rim .. 1 outer edge
+        const s = frac((Math.atan2(dy / B, dx / A) / TAU) * N);
+        const lit = dx * -0.6 + dy * -0.8 > 0;             // the half of the bowl facing the light
+        if (t < 0.07) c = s > 0.42 && s < 0.58 && t < 0.045 ? 'Y' : t < 0.035 ? 'd' : 'm';   // steel rim + lamps
+        else if (s < 0.05) c = 'm';                        // radial steel rib between leaves
+        else if (s < 0.2) c = lit ? 'i' : 'l';             // the next leaf's overlap shadow
+        else if (t > 0.9) c = lit ? 'x' : 'i';             // leaf tips curling down
+        else c = s > 0.7 && !lit ? 'i' : 'x';
+      } else if (eI <= 1) {
+        const inPitch = Math.abs(dx) <= hw && Math.abs(dy) <= hh;
+        const sur = Math.abs(dx) <= hw + 8 && Math.abs(dy) <= hh + 8;
+        if (inPitch) c = Math.floor((dx + hw) / 16) % 2 ? 'h' : 'G';
+        else if (sur) {
+          const board = Math.abs(dx) > hw + 5 || Math.abs(dy) > hh + 5;
+          const along = Math.abs(dx) > hw + 5 ? y : x;
+          c = board ? (Math.abs(dx) > hw + 6 || Math.abs(dy) > hh + 6 ? 'k' : ['x', 'F', 'p', 'Y'][Math.floor(along / 12) % 4]) : 'G';
+        } else {
+          const d = (1 - Math.sqrt(eI)) * Math.min(a, bi);  // px in from the rim
+          const aisle = frac((Math.atan2(dy / bi, dx / a) / TAU) * 32) < 0.035;
+          if (Math.floor(d) === 16) c = 'x';                 // walkway between the tiers
+          else if (aisle) c = 'l';
+          else c = Math.floor(d) % 3 === 0 ? 'r' : 'R';
+        }
+      } else {                                              // esplanade: argyle paving on a tile grid
+        const k = ((Math.floor((x + y) / 8) + Math.floor((x - y + 1024) / 8)) & 1);
+        c = x % 16 === 0 || y % 16 === 0 ? 't' : k ? 'T' : 'c';
+        if (Math.sqrt(eO) < 1.035 && Math.sqrt(eO) > 1.02) c = 'p';   // pink curb along the bowl
+      }
+      buf[i] = c;
+    }
+    // roof edges outlined, and the roof's shadow falling to the bottom-right
+    const DARK = { x: 'l', i: 'l', l: 'm', m: 'd', d: 'k', T: 't', c: 'T', t: 's', p: 'R', R: 'r', r: 'u', G: 'g', h: 'G',
+      F: 'f', Y: 'y', k: 'K', s: 'S' };
+    const out = buf.slice();
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      if (roof[i]) continue;
+      const nb = (x > 0 && roof[i - 1]) || (x < W - 1 && roof[i + 1]) || (y > 0 && roof[i - W]) || (y < H - 1 && roof[i + W]);
+      if (nb) out[i] = 'K';
+      else if (x >= 5 && y >= 5 && roof[i - 5 * W - 5]) out[i] = DARK[buf[i]] || buf[i];
+    }
+    const img = ctx.createImageData(W, H), rgb = {};
+    for (let i = 0; i < W * H; i++) {
+      const hx = PAL[out[i]] || PAL.m;
+      const v = rgb[hx] || (rgb[hx] = [parseInt(hx.slice(1, 3), 16), parseInt(hx.slice(3, 5), 16), parseInt(hx.slice(5, 7), 16)]);
+      img.data[i * 4] = v[0]; img.data[i * 4 + 1] = v[1]; img.data[i * 4 + 2] = v[2]; img.data[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    // pitch markings and goals
+    ctx.fillStyle = PAL.x;
+    const X0 = Math.round(cx - hw + 3), Y0 = Math.round(cy - hh + 3), PW = hw * 2 - 6, PH = hh * 2 - 6;
+    const line = (x, y, w, h) => ctx.fillRect(Math.round(x), Math.round(y), Math.max(1, Math.round(w)), Math.max(1, Math.round(h)));
+    line(X0, Y0, PW, 1); line(X0, Y0 + PH - 1, PW, 1); line(X0, Y0, 1, PH); line(X0 + PW - 1, Y0, 1, PH);
+    line(cx, Y0, 1, PH);
+    const r = PH * 0.14;
+    for (let t = 0; t < TAU; t += 0.05) line(cx + Math.cos(t) * r, cy + Math.sin(t) * r, 1, 1);
+    line(cx - 1, cy - 1, 3, 3);
+    const bw = PH * 0.5, bd = PW * 0.13, sw = PH * 0.24, sd = PW * 0.05;
+    for (const end of [0, 1]) {
+      const x = end ? X0 + PW - bd : X0, xs = end ? X0 + PW - sd : X0;
+      line(x, cy - bw / 2, bd, 1); line(x, cy + bw / 2, bd, 1); line(end ? x : x + bd, cy - bw / 2, 1, bw);
+      line(xs, cy - sw / 2, sd, 1); line(xs, cy + sw / 2, sd, 1); line(end ? xs : xs + sd, cy - sw / 2, 1, sw);
+      line(end ? X0 + PW - bd * 0.7 : X0 + bd * 0.7, cy, 1, 1);
+      ctx.fillStyle = PAL.K; line(end ? X0 + PW : X0 - 4, cy - 8, 4, 16);
+      ctx.fillStyle = PAL.l; line(end ? X0 + PW : X0 - 3, cy - 7, 3, 14); ctx.fillStyle = PAL.x;
+    }
+    return cv;
+  },
+
   // shipping containers: the roof is the container sprite (32x80 inside a 48x96 cell)
   spriteRoof(b) {
     const cv = mkCanvas(b.w, b.h);
@@ -436,8 +601,10 @@ const Render = {
   drawSign(ctx, b, glow) {
     const text = b.sign;
     const w = Font.width(text) + 8, h = 12;
-    const x = Math.round((b.w - w) / 2), y = Math.round(Math.min(b.h - h - 4, b.h * 0.5 - h / 2));
-    const neon = b.wall === 'store_b' || b.sign === 'BAR' ? PAL.z : b.sign === 'GAS' ? PAL.L : PAL.q;
+    const x = Math.round((b.w - w) / 2);
+    const g = b.roof.type === 'stadium' && this.stadiumGeom(b);
+    const y = g ? Math.round(g.cy + (g.bi + g.B) / 2 - h / 2) : Math.round(Math.min(b.h - h - 4, b.h * 0.5 - h / 2));
+    const neon = b.wall === 'store_b' || b.sign === 'BAR' || b.wall === 'gunshop' ? PAL.z : b.sign === 'GAS' ? PAL.L : PAL.q;
     if (!glow) {
       ctx.fillStyle = PAL.K; ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
       ctx.fillStyle = PAL.k; ctx.fillRect(x, y, w, h);
@@ -500,6 +667,22 @@ const Render = {
     const neon = { plum: PAL.z, mint: PAL.q, teal: PAL.q, glass: PAL.q, mall: PAL.p }[style];
     const cv = mkCanvas(b.w, b.h);
     if (b.sign) this.drawSign(cv.ctx, b, true);
+    if (b.roof.type === 'stadium') { // floodlit bowl: re-draw the open oval bright, light the rim lamps
+      const g = this.stadiumGeom(b), day = this.roof(b, 0), c2 = cv.ctx;
+      c2.save();                                          // floodlight spill on the white leaves
+      c2.beginPath(); c2.ellipse(g.cx, g.cy, g.A, g.B, 0, 0, Math.PI * 2); c2.clip();
+      c2.globalAlpha = 0.3; c2.drawImage(day, 0, 0); c2.globalAlpha = 1;
+      c2.restore();
+      c2.save();
+      c2.beginPath(); c2.ellipse(g.cx, g.cy, g.a, g.bi, 0, 0, Math.PI * 2); c2.clip();
+      c2.globalAlpha = 0.85; c2.drawImage(day, 0, 0); c2.globalAlpha = 1;
+      c2.restore();
+      c2.fillStyle = PAL.j;
+      for (let k = 0; k < g.N; k++) {                     // one lamp per leaf, on the inner rim
+        const t = ((k + 0.5) / g.N) * Math.PI * 2, x = g.cx + Math.cos(t) * (g.a + 2), y = g.cy + Math.sin(t) * (g.bi + 2);
+        c2.fillRect(Math.round(x) - 1, Math.round(y) - 1, 3, 2);
+      }
+    }
     if (b.roof.type !== 'flat') return cv;
     if (neon && (b.floors >= 4 || style === 'plum' || style === 'mall')) {
       cv.ctx.fillStyle = neon;
@@ -514,8 +697,7 @@ const Render = {
     this.frameNo++;
     const list = [];
     const m = 200;
-    for (const b of this.city.buildings) {
-      if (b.x + b.w < cam.x - m || b.x > cam.x + cam.w + m || b.y + b.h < cam.y - m || b.y > cam.y + cam.h + m) continue;
+    for (const b of this.idx.buildings.query(cam.x - m, cam.y - m, cam.x + cam.w + m, cam.y + cam.h + m)) {
       const dx = b.x + b.w / 2 - cam.cx, dy = b.y + b.h / 2 - cam.cy;
       list.push({ b, d: dx * dx + dy * dy, ox: Math.round(dx * PARALLAX * b.height), oy: Math.round(dy * PARALLAX * b.height) });
     }
@@ -569,22 +751,50 @@ const Render = {
       }
     }
     ctx.drawImage(this.roof(b, time), X + ox, Y + oy);
+    // roof-mounted talls (antenna masts): a pole from the roof up, lifted by roof height + h
+    for (const t of b.roofTalls || []) {
+      const wx = b.x + t.x, wy = b.y + t.y;
+      const [rx, ry] = this.lift(cam, wx, wy, b.height), [tx, ty] = this.lift(cam, wx, wy, b.height + t.h);
+      ctx.fillStyle = PAL[t.column || 'l'];
+      this.pole(ctx, Math.round(rx), Math.round(ry), Math.round(tx - rx), Math.round(ty - ry), 3);
+      const sheet = t.sheet || 'big', sh = Assets.sheets[sheet];
+      Assets.draw(ctx, sheet, Assets.frame(sheet, t.sprite, 0), Math.round(tx) - sh.w / 2, Math.round(ty) - sh.h / 2);
+    }
   },
 
   // --------------------------------------------------- trees and lamps --
   LAMP_H: 60,
   TREE_H: 40,
+  SIGNAL_H: 70,
+
+  // world point at height h → screen position (the oblique parallax)
+  lift(cam, x, y, h) {
+    return [x - cam.x + (x - cam.cx) * PARALLAX * h, y - cam.y + (y - cam.cy) * PARALLAX * h];
+  },
+  pole(ctx, bx, by, hx, hy, w = 2) {
+    const steps = Math.max(1, Math.abs(hx), Math.abs(hy));
+    for (let i = 0; i <= steps; i++) ctx.fillRect(bx + Math.round((hx * i) / steps), by + Math.round((hy * i) / steps), w, w);
+  },
+
+  // traffic-light state: 'v' and 'h' signals alternate (8 s green, 2 s yellow, 10 s red)
+  // frames of props:traffic_light: 0 red, 1 yellow, 2 green
+  signalFrame(axis) {
+    const t = (G.t % 20 + 20) % 20;
+    const v = t < 8 ? 2 : t < 10 ? 1 : 0;
+    const h = t < 10 ? 0 : t < 18 ? 2 : 1;
+    return axis === 'v' ? v : h;
+  },
+
   drawTall(ctx, cam, glowPass) {
-    const time = G.time;
-    for (const l of this.city.lamps) {
+    const time = G.time, I = this.idx;
+    const m = 60, q = [cam.x - m, cam.y - m, cam.x + cam.w + m, cam.y + cam.h + m];
+    for (const l of I.lamps.query(...q)) {
       if (l.broken) continue;
-      if (l.x < cam.x - 40 || l.x > cam.x + cam.w + 40 || l.y < cam.y - 40 || l.y > cam.y + cam.h + 40) continue;
       const hx = Math.round((l.x - cam.cx) * PARALLAX * this.LAMP_H), hy = Math.round((l.y - cam.cy) * PARALLAX * this.LAMP_H);
       const bx = Math.round(l.x - cam.x), by = Math.round(l.y - cam.y);
       if (!glowPass) {
         ctx.fillStyle = PAL.k;
-        const steps = Math.max(1, Math.abs(hx), Math.abs(hy));
-        for (let i = 0; i <= steps; i++) ctx.fillRect(bx + Math.round(hx * i / steps), by + Math.round(hy * i / steps), 2, 2);
+        this.pole(ctx, bx, by, hx, hy);
         ctx.fillRect(bx - 1, by - 1, 4, 4);
       }
       Assets.draw(ctx, 'props', Assets.frame('props', 'lamp'), bx + hx - 8, by + hy - 8);
@@ -593,31 +803,92 @@ const Render = {
         ctx.fillRect(bx + hx - 1, by + hy - 1, 3, 2);
       }
     }
+    for (const s of I.signals.query(...q)) {
+      const hx = Math.round((s.x - cam.cx) * PARALLAX * this.SIGNAL_H), hy = Math.round((s.y - cam.cy) * PARALLAX * this.SIGNAL_H);
+      const bx = Math.round(s.x - cam.x), by = Math.round(s.y - cam.y);
+      if (!glowPass) { ctx.fillStyle = PAL.K; this.pole(ctx, bx, by, hx, hy); ctx.fillRect(bx - 1, by - 1, 4, 4); }
+      if (!glowPass || time > 0) Assets.drawRot(ctx, 'props', Assets.frame('props', 'traffic_light', this.signalFrame(s.axis)), bx + hx, by + hy, s.axis === 'v' ? 0 : Math.PI / 2);
+    }
     if (glowPass) return;
     const big = Assets.sheets.big;
-    for (const t of this.city.talls) {
-      const m = 60 + t.h * 0.3;
-      if (t.x < cam.x - m || t.x > cam.x + cam.w + m || t.y < cam.y - m || t.y > cam.y + cam.h + m) continue;
+    const mt = 200, qt = [cam.x - mt, cam.y - mt, cam.x + cam.w + mt, cam.y + cam.h + mt];
+    for (const t of I.talls.query(...qt)) {
       const ox = (t.x - cam.cx) * PARALLAX * t.h, oy = (t.y - cam.cy) * PARALLAX * t.h;
       const bx = t.x - cam.x, by = t.y - cam.y;
       if (t.column) { // cylinder body from the ground up to the top
         const steps = Math.max(1, Math.ceil(Math.hypot(ox, oy)));
         for (let i = 0; i <= steps; i += 2) {
           const u = i / steps;
-          ctx.fillStyle = u < 0.5 ? PAL.k : PAL[t.column === 'R' ? 'r' : 'd'];
-          this._disc(ctx, bx + ox * u, by + oy * u, t.r - 1);
+          ctx.fillStyle = u < 0.5 ? PAL.k : PAL[{ R: 'r', O: 'r', m: 'd' }[t.column] || 'd'];
+          this._disc(ctx, bx + ox * u, by + oy * u, Math.max(1, t.r - 1));
         }
         if (t.column === 'R') { // candy stripes on a chimney
           ctx.fillStyle = PAL.x;
           for (const u of [0.7, 0.85]) this._disc(ctx, bx + ox * u, by + oy * u, t.r - 1);
         }
       }
-      Assets.draw(ctx, 'big', Assets.frame('big', t.sprite), Math.round(bx + ox) - 24, Math.round(by + oy) - 24);
+      const sheet = t.sheet || 'big', sh = Assets.sheets[sheet];
+      Assets.draw(ctx, sheet, Assets.frame(sheet, t.sprite, t.frame || 0), Math.round(bx + ox) - sh.w / 2, Math.round(by + oy) - sh.h / 2);
     }
-    for (const tr of this.city.trees) {
-      if (tr.x < cam.x - 60 || tr.x > cam.x + cam.w + 60 || tr.y < cam.y - 60 || tr.y > cam.y + cam.h + 60) continue;
+    for (const k of I.cables.query(...qt)) this.drawCable(ctx, cam, k);
+    for (const sp of I.sprites.query(...qt)) if (sp.h > 0) this.drawSprite(ctx, cam, sp);
+    for (const tr of I.trees.query(...q)) {
       const ox = Math.round((tr.x - cam.cx) * PARALLAX * this.TREE_H), oy = Math.round((tr.y - cam.cy) * PARALLAX * this.TREE_H);
       ctx.drawImage(big.img, Assets.frame('big', tr.sprite) * 48, 0, 48, 48, Math.round(tr.x - cam.x - 24 + ox), Math.round(tr.y - cam.y - 24 + oy), 48, 48);
+    }
+  },
+
+  // cable / beam between two raised points; sag pulls the middle down (px of height)
+  drawCable(ctx, cam, k) {
+    ctx.fillStyle = PAL[k.color || 'r'];
+    const w = k.w || 1;
+    const at = (u) => this.lift(cam, lerp(k.ax, k.bx, u), lerp(k.ay, k.by, u), lerp(k.ah, k.bh, u) - (k.sag || 0) * 4 * u * (1 - u));
+    // walk the curve in steps short enough on screen to leave no gaps
+    const segs = 32;
+    let [px, py] = at(0);
+    for (let i = 1; i <= segs; i++) {
+      const [nx, ny] = at(i / segs);
+      const n = Math.max(1, Math.ceil(Math.max(Math.abs(nx - px), Math.abs(ny - py))));
+      for (let j = 0; j < n; j++) ctx.fillRect(Math.round(px + ((nx - px) * j) / n), Math.round(py + ((ny - py) * j) / n), w, w);
+      px = nx; py = ny;
+    }
+  },
+
+  // free sprites (planes, ships, boats, cranes). h = 0 draws at ground level, h > 0 raised.
+  drawSprite(ctx, cam, sp) {
+    const [x, y] = sp.h > 0 ? this.lift(cam, sp.x, sp.y, sp.h) : [sp.x - cam.x, sp.y - cam.y];
+    const f = Assets.frame(sp.sheet, sp.tag, sp.anim ? Math.floor(G.t * sp.anim) : sp.frame || 0);
+    if (sp.shadow !== false) {
+      ctx.globalAlpha = 0.3;
+      Assets.drawRot(ctx, sp.sheet, f, x + 3 + sp.h * 0.05, y + 4 + sp.h * 0.05, sp.ang || 0, Assets.tinted(sp.sheet, '#12142e'));
+      ctx.globalAlpha = 1;
+    }
+    Assets.drawRot(ctx, sp.sheet, f, x, y, sp.ang || 0);
+  },
+  drawGroundSprites(ctx, cam) {
+    const m = 200;
+    for (const sp of this.idx.sprites.query(cam.x - m, cam.y - m, cam.x + cam.w + m, cam.y + cam.h + m)) if (!(sp.h > 0)) this.drawSprite(ctx, cam, sp);
+  },
+
+  // night lights owned by the world: traffic lights, lit talls (floodlights, masts)
+  worldLights(L, cam) {
+    const m = 120, q = [cam.x - m, cam.y - m, cam.x + cam.w + m, cam.y + cam.h + m];
+    const col = ['rgba(255,70,90,0.8)', 'rgba(255,200,80,0.8)', 'rgba(90,255,170,0.8)'];
+    for (const s of this.idx.signals.query(...q)) {
+      const [x, y] = this.lift(cam, s.x, s.y, this.SIGNAL_H);
+      L.push({ x: x + cam.x, y: y + cam.y, r: 22, color: col[this.signalFrame(s.axis)] });
+    }
+    for (const b of this.idx.buildings.query(...q)) for (const t of b.roofTalls || []) {
+      if (!t.light) continue;
+      const [x, y] = this.lift(cam, b.x + t.x, b.y + t.y, b.height + t.h);
+      L.push({ x: x + cam.x, y: y + cam.y, r: t.light.r || 40, color: t.light.color || 'rgba(255,60,80,0.9)' });
+    }
+    for (const t of this.idx.talls.query(...q)) {
+      if (!t.light) continue;
+      const [x, y] = this.lift(cam, t.x, t.y, t.h);
+      // floodlights throw a wide pool onto the pitch below them
+      const flood = t.sprite === 'floodlight';
+      L.push({ x: x + cam.x, y: y + cam.y, r: flood ? Math.max(170, t.light.r || 0) : t.light.r || 60, color: t.light.color || 'rgba(255,240,200,0.9)' });
     }
   },
 
