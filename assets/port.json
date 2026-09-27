@@ -1,0 +1,108 @@
+{ "frames": [
+   {
+    "filename": "port 0.aseprite",
+    "frame": { "x": 0, "y": 0, "w": 48, "h": 96 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 48, "h": 96 },
+    "sourceSize": { "w": 48, "h": 96 },
+    "duration": 100
+   },
+   {
+    "filename": "port 1.aseprite",
+    "frame": { "x": 48, "y": 0, "w": 48, "h": 96 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 48, "h": 96 },
+    "sourceSize": { "w": 48, "h": 96 },
+    "duration": 100
+   },
+   {
+    "filename": "port 2.aseprite",
+    "frame": { "x": 96, "y": 0, "w": 48, "h": 96 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 48, "h": 96 },
+    "sourceSize": { "w": 48, "h": 96 },
+    "duration": 100
+   },
+   {
+    "filename": "port 3.aseprite",
+    "frame": { "x": 144, "y": 0, "w": 48, "h": 96 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 48, "h": 96 },
+    "sourceSize": { "w": 48, "h": 96 },
+    "duration": 100
+   },
+   {
+    "filename": "port 4.aseprite",
+    "frame": { "x": 192, "y": 0, "w": 48, "h": 96 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 48, "h": 96 },
+    "sourceSize": { "w": 48, "h": 96 },
+    "duration": 100
+   },
+   {
+    "filename": "port 5.aseprite",
+    "frame": { "x": 240, "y": 0, "w": 48, "h": 96 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 48, "h": 96 },
+    "sourceSize": { "w": 48, "h": 96 },
+    "duration": 100
+   },
+   {
+    "filename": "port 6.aseprite",
+    "frame": { "x": 288, "y": 0, "w": 48, "h": 96 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 48, "h": 96 },
+    "sourceSize": { "w": 48, "h": 96 },
+    "duration": 100
+   },
+   {
+    "filename": "port 7.aseprite",
+    "frame": { "x": 336, "y": 0, "w": 48, "h": 96 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 48, "h": 96 },
+    "sourceSize": { "w": 48, "h": 96 },
+    "duration": 100
+   },
+   {
+    "filename": "port 8.aseprite",
+    "frame": { "x": 384, "y": 0, "w": 48, "h": 96 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 48, "h": 96 },
+    "sourceSize": { "w": 48, "h": 96 },
+    "duration": 100
+   }
+ ],
+ "meta": {
+  "app": "http://www.aseprite.org/",
+  "version": "1.3.18.6-x64",
+  "image": "port.png",
+  "format": "RGBA8888",
+  "size": { "w": 432, "h": 96 },
+  "scale": "1",
+  "frameTags": [
+   { "name": "crane_trolley", "from": 0, "to": 0, "direction": "forward", "color": "#000000ff" },
+   { "name": "crane_spreader", "from": 1, "to": 1, "direction": "forward", "color": "#000000ff" },
+   { "name": "container_red", "from": 2, "to": 2, "direction": "forward", "color": "#000000ff" },
+   { "name": "container_teal", "from": 3, "to": 3, "direction": "forward", "color": "#000000ff" },
+   { "name": "container_blue", "from": 4, "to": 4, "direction": "forward", "color": "#000000ff" },
+   { "name": "container_yellow", "from": 5, "to": 5, "direction": "forward", "color": "#000000ff" },
+   { "name": "container_purple", "from": 6, "to": 6, "direction": "forward", "color": "#000000ff" },
+   { "name": "container_grey", "from": 7, "to": 7, "direction": "forward", "color": "#000000ff" },
+   { "name": "container_brown", "from": 8, "to": 8, "direction": "forward", "color": "#000000ff" }
+  ],
+  "layers": [
+   { "name": "port", "opacity": 255, "blendMode": "normal" }
+  ],
+  "slices": [
+  ]
+ }
+}

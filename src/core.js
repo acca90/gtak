@@ -46,6 +46,31 @@ const PAL = {
   B: '#2c5a8c', C: '#7fb0e0',
 };
 
+// Paint shop colours (paintshop-v1, pixel-agent). ramp = [light, mid, shadow], the same
+// roles as a car's body ramp. Runtime-only recolours, not palette chars (like Render.BLOOD):
+// pastel, hue-shifted shadows, mids bright enough to read under the night multiply.
+const PAINTS = [
+  { id: 0, name: 'CANDY PINK', ramp: ['#ffc4d6', '#f08cb0', '#b0547c'] },
+  { id: 1, name: 'MINT', ramp: ['#c8f2dc', '#8fd8b8', '#4f9c86'] },
+  { id: 2, name: 'SKY', ramp: ['#c4e8f6', '#86c4e6', '#4a80b4'] },
+  { id: 3, name: 'LILAC', ramp: ['#e2ccf0', '#b48ac4', '#7e5a9e'] },
+  { id: 4, name: 'LEMON', ramp: ['#fff4b8', '#f4d86a', '#c49a3a'] },
+  { id: 5, name: 'PEACH', ramp: ['#ffd8bc', '#f6a982', '#c0704e'] },
+  { id: 6, name: 'CREAM', ramp: ['#fff8e6', '#f0e2c0', '#bfa888'] },
+  { id: 7, name: 'TEAL', ramp: ['#9fd4c4', '#4fa89e', '#2f6e6e'] },
+  { id: 8, name: 'CHERRY', ramp: ['#f08a8a', '#d04a5e', '#8a2440'] },
+  { id: 9, name: 'SLATE', ramp: ['#b8c0d4', '#7a849e', '#4a5068'] },  // gangs-v1 G2 (appended; ids are stored on cars, never reorder): Orlov black sedans, Orchid sports cars
+  { id: 10, name: 'NOIR', ramp: ['#767c9a', '#3c3f58', '#1c1e2c'] },
+  { id: 11, name: 'ORCHID', ramp: ['#c77fe6', '#8b3cb8', '#4f1a78'] },
+];
+// Stock body ramp [light, mid, shadow] of each paintable model: the `body` of CAR_SPECS in
+// tools/generate-art.lua (stored there as {dark, mid, light}). Keep the two in sync.
+const CAR_BODY = {
+  hatch: [PAL.H, PAL.h, PAL.G], sedan: [PAL.f, PAL.E, PAL.e], sport: [PAL.p, PAL.R, PAL.r],
+  muscle: [PAL.C, PAL.B, PAL.k], suv: [PAL.l, PAL.m, PAL.d], taxi: [PAL.Y, PAL.L, PAL.y],
+  pickup: [PAL.o, PAL.N, PAL.n], van: [PAL.P, PAL.U, PAL.u],
+};
+
 // ------------------------------------------------------------------ assets --
 const Assets = {
   sheets: {},
@@ -95,6 +120,39 @@ const Assets = {
       this._tints[key] = c;
     }
     return this._tints[key];
+  },
+  _paints: {},
+  PAINT_MASKS: { cars: 'carpaint' },   // sheet -> its paint-mask sheet
+  // Copy of a sheet where one tag's frames are resprayed with PAINTS[paintId] (paintshop-v1).
+  // The mask sheet (PAINT_MASKS: cars -> carpaint) holds, per tag, the body-ramp pixels split
+  // into light / mid / shadow frames; each is tinted to the paint shade and drawn over the
+  // car, so glass, lights, trim and the taxi sign stay untouched. Compositing only (no
+  // getImageData: file:// images taint canvases). Every frame of the tag except the wreck
+  // (the 3rd of normal/brake/wreck) is repainted. Unknown tag or paint -> the plain sheet.
+  painted(sheet, tag, paintId) {
+    const s = this.sheets[sheet], mask = this.sheets[this.PAINT_MASKS[sheet]], p = PAINTS[paintId];
+    if (!p || !mask || !mask.tags[tag] || !s.tags[tag]) return s.img;
+    const key = sheet + ':' + tag + ':' + paintId;
+    let cv = this._paints[key];
+    if (cv) return cv;
+    cv = mkCanvas(s.img.width, s.img.height);
+    cv.ctx.drawImage(s.img, 0, 0);
+    const [t0, t1] = s.tags[tag], m0 = mask.tags[tag][0];
+    const tmp = mkCanvas(s.w, s.h);
+    const last = t1 - t0 + 1 >= 3 ? t1 - 1 : t1;                 // skip the wreck frame
+    for (let f = t0; f <= last; f++) {
+      for (let j = 0; j < 3; j++) {
+        tmp.ctx.globalCompositeOperation = 'source-over';
+        tmp.ctx.clearRect(0, 0, s.w, s.h);
+        tmp.ctx.drawImage(mask.img, (m0 + j) * mask.w, 0, s.w, s.h, 0, 0, s.w, s.h);
+        tmp.ctx.globalCompositeOperation = 'source-in';
+        tmp.ctx.fillStyle = p.ramp[j];
+        tmp.ctx.fillRect(0, 0, s.w, s.h);
+        cv.ctx.drawImage(tmp, f * s.w, 0);
+      }
+    }
+    this._paints[key] = cv;
+    return cv;
   },
 };
 

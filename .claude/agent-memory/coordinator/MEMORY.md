@@ -1,6 +1,86 @@
 # coordinator — cross-cutting decisions
 Written by the main session (not a subagent). Format: `.claude/rules/decisions.md`. Newest first.
 
+## 2026-09-27 · Mob cars carry a crew of two; rival mobs avoid and shoot each other
+- **Decision:** a gang car never reacts like a civilian: when the player hits it, it stops and its two members bail
+  out fighting (`Peds.driverOut(..., { gang, bail: true, foe })`); jacking one brings out both. Members don't walk
+  into another mob's turf and gang cars don't drive into it; members of different mobs shoot on sight (220 px, clear
+  line) and crews rally; no respect change for rival fights.
+- **Why:** the user's play-test notes of 2026-09-27.
+- **Where:** `driverOut` (`bail`, `foe`), `gangScan`, `edgeTurf`, `atNode` in src/peds.js; `Game.gangBail`, `pickExit` (vehicles-agent).
+- **Status:** active; built (peds + G7) 2026-09-27, tested headless, not play-tested
+
+## 2026-09-27 · No friendly fire fights; mobs and cops fight any attacker
+- **Decision:** `Peds.sameSide(p, b)` (same mob, or both cops): friendly fire hurts but starts no fight. Mob members
+  fight whoever hurt or killed one of theirs (player, civilian or cop) and rally the crew against them; cops fight
+  back against any non-cop ped who hurts them. A ped already in a fight keeps its target.
+- **Why:** the user saw mob members turn on each other after friendly fire, and asked that civilians and cops who
+  attack them be fought instead.
+- **Where:** `sameSide`, `react`, `gangFight(p, foe)`, `rally(p, foe)`, `kill` in src/peds.js.
+- **Status:** active
+
+## 2026-09-27 · Mob systems first, story parked (spec: docs/specs/gangs-v1.md)
+- **Decision:** the user: "forget the story for now, wire the pieces". Built: `src/gangs.js` (respect -100..100,
+  5 bands, war rule half, turf = district), members as peds (12% of peds in turf, Ironworks 6% Orlov; 40 hp; hostile
+  band attacks on sight within 160 px, kill-on-sight within 260 px; members rally within 200 px), gang cars (10% of
+  turf traffic, 1 in 15 parked), the respect HUD (badges under the clock, +/- flash, band-change toast). The mob
+  paints NOIR/ORCHID aren't sold in paint shops. All numbers provisional. The story bible in docs/story/ is parked.
+- **Why:** the user's request of 2026-09-27; they deferred the player character and the story.
+- **Status:** active; built, not play-tested
+
+## 2026-09-27 · screenplay-agent created; gangs and story unlocked
+- **Decision:** a seventh agent, `screenplay-agent`, owns the story bible (`docs/story/`), `src/missions.js`
+  (moved from the coordinator) and the mob mechanics (`src/gangs.js`). Gang members stay peds driven by the
+  coordinator's `peds.js` through a contract the screenplay-agent proposes. `mobs.txt` is read-only for agents.
+- **Why:** the user asked for it to start the mobs (backlog 3) and, later, the story (backlog 7).
+- **Status:** active
+
+## 2026-09-27 · Map hover names
+- **Decision:** on the M map, the mouse shows a tooltip: shop/payphone under the cursor (with a ring), landmark
+  (rect), then city/region (`placeAt().district`, or THE SEA / COUNTRYSIDE), neighbourhood, street.
+- **Why:** the user asked to see region and city names on the map.
+- **Where:** `HUD.mapHover` in src/game.js.
+- **Status:** active
+
+## 2026-09-27 · Carjacking, basic cops, paint shops
+- **Decision:** carjacking: E by a traffic car < 30 px/s; the driver is yanked out as a ped with a zone temper
+  (violent fists drivers pull you back out if you're still < 20 px/s). Cops: foot patrols only (zone share 2-8%,
+  15% within 500 px of the station), 70 hp, pistol 65% / shotgun 35%, engage when they see the player's violence
+  (derived in peds.js from the alarms/hurts whose source is the player), radio cops within 260 px, give up at
+  600 px or 20 s out of sight. No wanted level yet. Paint shops: 4 (one per city + Ironworks), a colour menu,
+  $400 respray + repair, 8 allowed models; the recolour is a tinted per-shade mask (pixel-agent), not a colour swap.
+- **Why:** the user's requests and answers of 2026-09-27.
+- **Where:** src/peds.js (`COP`, `driverOut`), src/paint.js, `JACK` and `Game.jack` in src/game.js.
+- **Status:** active; built with sounds 2026-09-27, not play-tested
+
+## 2026-09-27 · Ped tuning after the user's first look; streaming fill
+- **Decision:** peds walk 15-21 px/s and run 58 (a real pace at ~11.5 px/m; was 28-38 / 85). Dodging a car:
+  30% of close calls, and only with >= 0.5 s of warning. Density downtown 16 per 100 walk tiles (cap 120 peds),
+  traffic downtown 5.0 (closes traffic B5). Spawns are weighted by walk length x zone density, and the whole AOV
+  (on screen too) is filled at game start and whenever the camera jumps > 1500 px. Uzi peds fire 7-round
+  bursts, pistol 3. Peds use their own mover against a per-tick car grid (update 1.5 -> 0.85 ms).
+- **Why:** the user said peds were too fast and dodged cars too easily; screenshots showed ~3 peds on screen.
+- **Where:** `PED` in src/peds.js; `ZONES[z].peds/traffic` in src/city.js.
+- **Status:** active; not play-tested since
+
+## 2026-09-27 · Living airport and port (spec: docs/specs/ambient-v1.md)
+- **Decision:** one flight movement every ~150 s (land from the south, take off north from the south end);
+  moving planes never stop and shove/damage cars and kill bodies. Three cranes load and unload the ship forever.
+  `src/airport.js` (vehicles-agent) owns planes and cranes; they are `dyn` sprites that `Airport.init` takes out
+  of the static sprite index.
+- **Why:** the user's side-task request of 2026-09-27.
+- **Status:** active; built with sound 2026-09-27, not play-tested
+
+## 2026-09-27 · Pedestrians and cows unlocked (spec: docs/specs/peds-v1.md)
+- **Decision:** three hidden personalities (scared flee, angry complain but never fight, violent fight back
+  only when hit: fists mostly, pistol sometimes, uzi rarely). Density per zone like traffic, x0.5 at night.
+  Sidewalk graph + zebra crossings on green; traffic brakes for peds. Dead peds sometimes drop a $10-50 wallet.
+  Corpses and blood persist (blood baked into ground decals), fire deaths leave burnt corpses. Cows live in pasture
+  pens, stampede when scared, bulls charge, die to cars. Player fists get a real punch. Carjacking moving
+  traffic is deferred to the next round.
+- **Why:** the user's brief and answers of 2026-09-27.
+- **Status:** active; P1-P6 built 2026-09-27, not play-tested
+
 ## 2026-09-26 · Traffic phase B: lanes, driver, pool, reactions; all-red light phase
 - **Decision:** geo-agent's lane graph (`c.lanes`/`c.nodes`, right-hand traffic) + vehicles-agent's driver in
   `src/traffic.js` (steers via the player's control interface, so model stats apply) + the coordinator's pool in

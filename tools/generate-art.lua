@@ -763,6 +763,9 @@ local ROOF_STYLES = {
   -- weapons v2: gun store (steel tread plate, dusty-pink parapet, hatch instead of a patch;
   -- deterministic so it doesn't shift the RNG for the sheets generated after it)
   {name="gunshop",  cap={"p","R","r"}, floor={"A","b","a"}, pat="plate", alt=3},
+  -- paintshop v1: lilac parapet over light corrugated sheet, a spray-booth extraction fan
+  -- instead of a patch (deterministic, like the gun store)
+  {name="paintshop", cap={"P","U","u"}, floor={"l","x","m"}, pat="hribs", alt=4},
 }
 
 local roofs = sheet("roofs", 16, 16)
@@ -853,6 +856,14 @@ local function roofTile(st, top, right, bottom, left, variant)
   elseif variant == 3 then -- steel roof hatch with a handle
     rect(im, 3, 3, 10, 10, "K"); rect(im, 4, 4, 8, 8, "b"); rect(im, 4, 4, 8, 1, "m"); rect(im, 4, 4, 1, 8, "m")
     rect(im, 4, 11, 8, 1, "a"); rect(im, 11, 4, 1, 8, "a"); rect(im, 6, 7, 4, 1, "l"); rect(im, 6, 8, 4, 1, "K")
+  elseif variant == 4 then -- spray-booth extraction fan: square housing, round grille, 4 blades
+    rect(im, 2, 2, 12, 12, "K"); rect(im, 3, 3, 10, 10, "m"); rect(im, 3, 3, 10, 1, "x"); rect(im, 3, 3, 1, 10, "x")
+    rect(im, 3, 12, 10, 1, "d"); rect(im, 12, 3, 1, 10, "d")
+    disc(im, 8, 8, 4.2, "K"); disc(im, 8, 8, 3.4, "k")
+    for _, d in ipairs({{-1, -1}, {1, -1}, {-1, 1}, {1, 1}}) do
+      px(im, 8 + (d[1] < 0 and -2 or 1), 8 + (d[2] < 0 and -2 or 1), "l"); px(im, 8 + (d[1] < 0 and -1 or 0), 8 + (d[2] < 0 and -1 or 0), "m")
+    end
+    rect(im, 7, 7, 2, 2, "P")
   end
   return im
 end
@@ -1472,6 +1483,72 @@ end
 
 local KIND_FRAMES = { glass = glassFrames, shed = shedFrames, house = houseFrames, barn = barnFrames, deck = deckFrames,
                       civic = civicFrames, hangar = hangarFrames, gunshop = gunshopFrames }
+
+-- paint shop (paintshop v1): off-white panelled garage, a rainbow of paint stripes
+-- under the roof edge with drips, roll-up doors under a hazard lintel, a spray-can
+-- mural on plain walls. Same 8-frame contract. A table field, not a new local (the
+-- main chunk is near Lua's 200-locals limit); no R().
+KIND_FRAMES.paintshop = function(st)
+  local BAND = {"p", "Y", "H", "V", "P"}                -- pink, lemon, mint, sky, lilac
+  local DRIP = {1, 0, 3, 0, 0, 2, 0, 4, 0, 1, 0, 0, 3, 0, 2, 0}   -- drip length per 2-px column
+  local function base()
+    local im = img(32, 32)
+    for y = 0, 31 do for x = 0, 31 do
+      local c = st.base
+      if x % 8 == 7 then c = st.dark elseif x % 8 == 0 then c = st.light end   -- panel seams
+      if y <= 1 then c = st.light elseif y >= 30 then c = st.dark end
+      px(im, x, y, c)
+    end end
+    for i, c in ipairs(BAND) do rect(im, 0, 1 + i, 32, 1, c) end   -- rows 2..6
+    rect(im, 0, 7, 32, 1, "U")
+    for k = 0, 15 do                                    -- lilac drips off the band
+      local L = DRIP[k + 1]
+      if L > 0 then rect(im, k * 2, 8, 1, L, "U"); px(im, k * 2, 8 + L, "u") end
+    end
+    return im
+  end
+  local function win(lit)
+    local im = lit and img(32, 32) or base()
+    if not lit then rect(im, 4, 12, 24, 12, "m"); rect(im, 4, 12, 24, 1, "x"); rect(im, 3, 24, 26, 1, "l") end
+    glass(im, 5, 13, 22, 10, lit, "m")
+    return im
+  end
+  local function twin(lit)
+    local im = lit and img(32, 32) or base()
+    for _, x0 in ipairs({3, 18}) do
+      if not lit then rect(im, x0, 11, 11, 15, "m"); rect(im, x0 - 1, 26, 13, 1, "l") end
+      glass(im, x0 + 1, 12, 9, 13, lit, "m")
+    end
+    return im
+  end
+  local function ground(lit)
+    local im = lit and img(32, 32) or base()
+    if not lit then
+      rect(im, 1, 11, 30, 21, "K")                                    -- roll-up door
+      for y = 12, 31 do rect(im, 2, y, 28, 1, (y % 3 == 0) and "m" or "l") end
+      rect(im, 2, 12, 28, 1, "x")
+      rect(im, 1, 9, 30, 2, "L"); for x = 1, 30, 4 do rect(im, x, 9, 2, 2, "K") end   -- hazard lintel
+      rect(im, 13, 28, 6, 1, "d"); rect(im, 13, 29, 6, 1, "k")          -- handle
+      rect(im, 0, 31, 32, 1, "d")
+    else
+      rect(im, 2, 29, 28, 3, "j"); rect(im, 2, 29, 28, 1, "Y")          -- work lights spill under the door
+      for x = 1, 30, 4 do rect(im, x + 2, 9, 2, 2, "L") end               -- lintel lamps
+    end
+    return im
+  end
+  local function plain()
+    local im = base()
+    -- spray can: cream body, pink cap, nozzle mist
+    rect(im, 12, 14, 8, 15, "K"); rect(im, 13, 15, 6, 13, "x"); rect(im, 13, 15, 1, 13, "c"); rect(im, 18, 15, 1, 13, "l")
+    rect(im, 13, 19, 6, 4, "R"); rect(im, 13, 19, 6, 1, "p")            -- label
+    rect(im, 14, 11, 4, 3, "K"); rect(im, 15, 12, 2, 2, "R")            -- cap + nozzle
+    for _, d in ipairs({{21, 11, "p"}, {23, 10, "H"}, {22, 13, "V"}, {25, 12, "p"}, {24, 9, "Y"}, {26, 14, "P"}, {27, 10, "H"}}) do
+      px(im, d[1], d[2], d[3])
+    end
+    return im
+  end
+  return {win(), twin(), ground(), plain(), win("warm"), twin("warm"), ground("warm"), win("cool")}
+end
 local REGION_WALLS = {
   {name="glass",   kind="glass", base="B", light="C", dark="k", frame="l"},
   {name="glassg",  kind="glass", base="e", light="f", dark="K", frame="F"},
@@ -1503,6 +1580,8 @@ local REGION_WALLS = {
   {name="hangar",   kind="hangar", base="l", light="x", dark="m"},
   -- weapons v2
   {name="gunshop",  kind="gunshop", base="A", light="b", dark="a", sill="p"},
+  -- paintshop v1
+  {name="paintshop", kind="paintshop", base="i", light="x", dark="l"},
 }
 for _, st in ipairs(REGION_WALLS) do
   local frames
@@ -1778,6 +1857,111 @@ do
   add(cars, "ambulance", {a, b, wreckify(a)})
 end
 save(cars)
+
+-- ------------------------------------------------------- paint shop --
+-- paintshop v1 (S2). No R() in here.
+do
+  -- carpaint (32x64): per paintable car tag, its body-ramp pixels split by shade,
+  -- frames = light, mid, shadow, drawn in the body's own colours. Assets.painted()
+  -- tints each mask to the paint ramp and draws it over the car, so glass, lights,
+  -- trim and stripes survive even where they share a colour with the body (muscle
+  -- body = glass colours, suv body = trim grey, sport body = tail lights). The masks
+  -- come from drawing the car again with sentinel body colours. They fit the normal
+  -- and brake frames (only the tail lights differ); wrecks are not repainted.
+  local PAINTABLE = {"hatch", "sedan", "sport", "muscle", "suv", "taxi", "pickup", "van"}
+  local carpaint = sheet("carpaint", 32, 64)
+  local SENT = {"#1", "#2", "#3"}
+  for i, k in ipairs(SENT) do C[k] = pc.rgba(255, 0, i, 255) end
+  for _, name in ipairs(PAINTABLE) do
+    local spec = CAR_SPECS[name]
+    local real = carImage(name, "normal")
+    local body = spec.body
+    spec.body = SENT
+    local probe = carImage(name, "normal")
+    spec.body = body
+    local frames = {}
+    for j = 3, 1, -1 do                                   -- body = {dark, mid, light}: light first
+      local m = img(32, 64)
+      for y = 0, 63 do for x = 0, 31 do
+        if probe:getPixel(x, y) == C[SENT[j]] then
+          assert(real:getPixel(x, y) == C[body[j]], "carpaint: body pixel mismatch in " .. name)
+          m:drawPixel(x, y, C[body[j]])
+        end
+      end end
+      frames[#frames + 1] = m
+    end
+    add(carpaint, name, frames)
+  end
+  for _, k in ipairs(SENT) do C[k] = nil end
+  save(carpaint)
+
+  -- paint (16x16): the shop's bay floor mat as a 9-slice (TL T TR / L C R / BL B BR)
+  -- + a 32x32 spray-gun floor stencil in 4 frames (TL TR BL BR) for the mat's centre.
+  -- Pale floor, 1-px dark rim, 4-px hazard band (2-px diagonal stripes, period 4 so
+  -- they run on across tiles), a light kerb line, then clean floor with faint seams
+  -- and a few overspray flecks.
+  local paint = sheet("paint", 16, 16)
+  local FLECK = {"p", "H", "V", "Y", "P"}
+  local function matTile(top, right, bottom, left)
+    local im = img(16, 16)
+    for y = 0, 15 do for x = 0, 15 do
+      local d = 99
+      if top then d = math.min(d, y) end
+      if left then d = math.min(d, x) end
+      if bottom then d = math.min(d, 15 - y) end
+      if right then d = math.min(d, 15 - x) end
+      local c
+      if d == 0 then c = "d"
+      elseif d <= 4 then c = (((x + y) // 2) % 2 == 0) and "L" or "k"
+      elseif d == 5 then c = "l"
+      else
+        c = "i"
+        if x == 15 or y == 15 then c = "T" end                        -- 16-px floor seams
+        local h = (x * 7 + y * 13 + x * y * 3) % 61
+        if h == 5 then c = FLECK[(x * 3 + y * 2 + (x * y) % 7) % #FLECK + 1] end            -- overspray flecks
+      end
+      px(im, x, y, c)
+    end end
+    return im
+  end
+  add(paint, "bay_mat", {
+    matTile(true, false, false, true),  matTile(true, false, false, false),  matTile(true, true, false, false),
+    matTile(false, false, false, true), matTile(false, false, false, false), matTile(false, true, false, false),
+    matTile(false, false, true, true),  matTile(false, false, true, false),  matTile(false, true, true, false),
+  })
+  -- spray gun, side view, nozzle right, a cone of paint mist ahead of it
+  local icon = img(32, 32)
+  art(icon, 3, 6, {
+    "....KKKK........",
+    "...KllllK.......",
+    "...KlxxlK.......",
+    "...KlllmK.......",
+    "....KmmK........",
+    "..KKKmmKKKKKKK..",
+    ".KmmmmmmmmmmmdKK",
+    ".KxxlllllllllmdK",
+    ".KmmmmmmmmmmmdKK",
+    "..KKKdKmmKKKKK..",
+    "....KdK.KmK.....",
+    "....KKK.KmK.....",
+    "........KmK.....",
+    ".......KmmK.....",
+    ".......KdmK.....",
+    ".......KddK.....",
+    "........KK......",
+  })
+  for _, d in ipairs({{21, 12, "R"}, {23, 11, "p"}, {23, 14, "P"}, {25, 13, "R"}, {26, 10, "p"}, {26, 16, "V"},
+                      {28, 12, "p"}, {28, 15, "H"}, {29, 9, "Y"}, {30, 13, "R"}, {29, 18, "P"}, {24, 17, "H"}}) do
+    px(icon, d[1], d[2], d[3])
+    if d[3] == "R" then px(icon, d[1] + 1, d[2], "p"); px(icon, d[1], d[2] + 1, "r") end
+  end
+  local parts = {}
+  for _, o in ipairs({{0, 0}, {16, 0}, {0, 16}, {16, 16}}) do
+    local t = img(16, 16); t:drawImage(icon, Point(-o[1], -o[2])); parts[#parts + 1] = t
+  end
+  add(paint, "bay_icon", parts)
+  save(paint)
+end
 
 -- ------------------------------------------------------------ heavy --
 local function busImage(mode)
@@ -2215,6 +2399,185 @@ end
 save(tank)
 
 
+do -- figures, player, peds and animals share helpers; scoped to stay under Lua's 200-locals limit
+-- ============================================================ FIGURES ==
+-- Shared top-down people (player punch, peds, corpses). Deterministic: no R(),
+-- so the RNG stream of every sheet generated later is unchanged.
+-- Standing figures copy person(): head (hair) at the cell centre (8,8), shoulders
+-- behind it, arms at the sides, facing up. Lying bodies run head-up along the cell.
+local function r3(l) return {l[1], l[2], l[3] or l[2]} end
+local function capsule(im, x0, y0, x1, y1, r, list)      -- a limb: bevelled, lit top-left
+  local dx, dy = x1 - x0, y1 - y0
+  local L2 = math.max(1e-6, dx*dx + dy*dy)
+  local function inside(x, y)
+    local t = math.max(0, math.min(1, ((x+0.5-x0)*dx + (y+0.5-y0)*dy) / L2))
+    local ex, ey = x+0.5 - (x0 + dx*t), y+0.5 - (y0 + dy*t)
+    return ex*ex + ey*ey <= r*r
+  end
+  shape(im, math.floor(math.min(x0, x1) - r - 1), math.floor(math.min(y0, y1) - r - 1),
+    math.ceil(math.max(x0, x1) + r + 1), math.ceil(math.max(y0, y1) + r + 1), inside, r3(list))
+end
+local function onto(im, x, y, c) if opaque(im, x, y) then px(im, x, y, c) end end   -- only over drawn pixels
+
+-- outfit details painted onto the torso centred (cx, cy); view = "back" | "front"
+local function details(im, o, cx, cy, view)
+  local x0, x1 = math.floor(cx - 5), math.floor(cx + 5)
+  if o.stripe then for x = x0, x1 do onto(im, x, math.floor(cy + 1.5), o.stripe) end end
+  if o.straps then
+    for y = math.floor(cy - 2), math.floor(cy + 3) do onto(im, math.floor(cx - 2.5), y, o.straps); onto(im, math.floor(cx + 2.5), y, o.straps) end
+    if view == "front" then rect(im, math.floor(cx - 2), math.floor(cy), 4, 3, o.straps)
+    else for x = x0, x1 do onto(im, x, math.floor(cy + 2.5), o.straps) end end
+  end
+  if o.tie and view == "front" then
+    local ty = math.floor(cy - 3)
+    px(im, cx - 1, ty, "x"); px(im, cx, ty, "x"); px(im, cx - 2, ty, "x"); px(im, cx + 1, ty, "x")
+    rect(im, math.floor(cx - 1), ty + 1, 2, 3, o.tie)
+  end
+  if o.collar and view == "back" then onto(im, cx - 1, math.floor(cy + 1.5), o.collar); onto(im, cx, math.floor(cy + 1.5), o.collar) end
+  if o.badge then                                       -- cops: a gold glint on the shoulder / chest
+    if view == "front" then onto(im, math.floor(cx - 2), math.floor(cy - 1), o.badge)
+    else onto(im, math.floor(cx + 3), math.floor(cy - 1), o.badge) end
+  end
+  -- gangs-v1 G2 extras (nil for every earlier outfit, so their pixels are unchanged)
+  if o.vest then                                        -- seen from above: dark shoulder panels + hem, the tee between
+    local ix, iy = math.floor(cx), math.floor(cy)
+    for y = iy - 3, iy + 3 do onto(im, ix - 4, y, o.vest[2]); onto(im, ix + 3, y, o.vest[1]) end
+    if view == "front" then for y = iy, iy + 3 do onto(im, ix - 2, y, o.vest[2]); onto(im, ix + 1, y, o.vest[2]) end end
+  end
+  if o.hem then                                         -- bomber: dark rib band at the waist
+    for x = x0, x1 do onto(im, x, math.floor(cy + 2.5), o.hem) end
+  end
+  if o.chain then                                       -- gold chain round the neck (a pendant on the chest)
+    local ix, iy = math.floor(cx), math.floor(cy)
+    if view == "front" then
+      onto(im, ix - 2, iy - 2, o.chain); onto(im, ix - 1, iy - 1, o.chain)
+      onto(im, ix, iy - 1, o.chain); onto(im, ix + 1, iy - 2, o.chain); onto(im, ix - 1, iy, "Y"); onto(im, ix, iy, o.chain)
+    else
+      onto(im, ix - 2, iy + 1, o.chain); onto(im, ix + 1, iy + 1, o.chain)
+    end
+  end
+end
+
+-- headwear / hair over a head centred (hx, hy) radius hr
+local function headTop(im, o, hx, hy, hr)
+  local st = o.style or "short"
+  if o.cap then                                         -- police cap: crown, dark peak at the front, gold badge
+    sphere(im, hx, hy, hr, o.hair)
+    sphere(im, hx, hy + 0.4, hr + 0.1, o.cap)
+    ring(im, hx, hy + 0.4, hr - 0.5, hr + 0.2, "w")    -- navy band
+    local vy = math.floor(hy - hr - 0.2)
+    for x = math.floor(hx - 2), math.floor(hx + 1) do px(im, x, vy, "K") end
+    px(im, hx - 1, vy + 1, "k"); px(im, hx, vy + 1, "k")
+    px(im, hx - 1, vy + 2, o.badge or "L")
+    return
+  end
+  if st == "bald" then sphere(im, hx, hy, hr, o.skin); return end
+  sphere(im, hx, hy, hr, o.hair)
+  if o.slick then                                       -- slicked back: comb lines running front to back, a gel sheen
+    for y = math.floor(hy - hr + 1), math.floor(hy + hr - 1) do onto(im, hx, y, o.hair[1]) end
+    onto(im, hx - 1, math.floor(hy - 1), o.slick); onto(im, hx - 1, math.floor(hy), o.slick)
+  end
+  if st == "hat" then                                   -- wide straw brim + crown + band
+    sphere(im, hx, hy, hr + 1.1, o.hat); sphere(im, hx, hy, hr - 0.6, o.hat)
+    ring(im, hx, hy, hr - 0.6, hr + 0.1, o.band or "n")
+  elseif st == "hardhat" then                           -- dome + centre ridge + front peak
+    sphere(im, hx, hy, hr + 0.3, o.hat)
+    for y = math.floor(hy - hr + 0.5), math.floor(hy + hr - 0.5) do onto(im, hx, y, o.hat[#o.hat]) end
+    px(im, hx - 1, hy - hr - 0.6, o.hat[2]); px(im, hx, hy - hr - 0.6, o.hat[2])
+  elseif st == "bun" then sphere(im, hx, hy + hr * 0.95, 1.3, o.hair)
+  elseif st ~= "player" then                            -- a sliver of face at the front of the head
+    px(im, hx - 1, hy - hr + 0.3, o.skin[2]); px(im, hx, hy - hr + 0.3, o.skin[2])
+  end
+end
+
+-- standing figure. With the player's colours and no extras it draws exactly person().
+local function fig(o)
+  local im = img(16, 16)
+  local J, A, S = o.jacket, o.sleeve or o.jacket, o.skin
+  local hx, hy, hr = 8, o.hy or 8, o.hr or 2.7
+  if o.stepL then disc(im, 5.5, 8.5 + o.stepL, 1.3, o.shoe or "k") end
+  if o.stepR then disc(im, 10.5, 8.5 + o.stepR, 1.3, o.shoe or "k") end
+  if o.gun then rect(im, 10, 1, 2, 4, "d"); px(im, 10, 1, "K") end
+  if o.long then                                        -- shotgun held in both hands, muzzle up
+    rect(im, 9, 0, 2, 8, "k"); rect(im, 9, 1, 1, 7, "d"); px(im, 9, 0, "K"); px(im, 10, 0, "K")
+    rect(im, 9, 3, 2, 3, "N"); rect(im, 9, 3, 1, 3, "o")
+  end
+  if o.flare then blob(im, 8, 10.4, 4.9, 2.7, o.flare) end            -- skirt / dress hem
+  local aL, aR = o.armL or {4.2, 9}, o.armR or {11.8, 9}
+  local lL, lR = o.lenL or 2.3, o.lenR or 2.3
+  blob(im, aL[1], aL[2], 1.8, lL, A)
+  blob(im, aR[1], aR[2], 1.8, lR, A)
+  if o.track then                                       -- tracksuit: a white stripe down each sleeve
+    for y = math.floor(aL[2] - lL + 1), math.floor(aL[2] + lL) do onto(im, math.floor(aL[1]) - 1, y, o.track) end
+    for y = math.floor(aR[2] - lR + 1), math.floor(aR[2] + lR) do onto(im, math.floor(aR[1]) + 1, y, o.track) end
+  end
+  if o.cuff then                                        -- T-shirt: the sleeve ends, bare forearm toward the hand
+    for _, a in ipairs({{aL, lL}, {aR, lR}}) do
+      local ax, ay, len = a[1][1], a[1][2], a[2]
+      for y = math.floor(ay - len), math.floor(ay - 0.5) do
+        for x = math.floor(ax - 2), math.floor(ax + 2) do onto(im, x, y, (x + 0.5 < ax) and S[2] or S[1]) end
+      end
+    end
+  end
+  px(im, aL[1], aL[2] - lL + 0.3, S[2]); px(im, aR[1], aR[2] - lR + 0.3, S[2])
+  if o.fist then rect(im, o.fist[1], o.fist[2], 2, 2, S[2]); px(im, o.fist[1] + 1, o.fist[2] + 1, S[1]) end
+  local T = o.torso or {8, 9.5, 4.4, 2.9}
+  blob(im, T[1], T[2], T[3], T[4], J)
+  details(im, o, T[1], T[2], "back")
+  if o.style == "long" then blob(im, hx, hy + 1.5, hr, hr + 0.2, o.hair) end
+  if o.style == "pony" then disc(im, hx, hy + hr + 1.2, 1.2, o.hair[2]); px(im, hx - 1, hy + hr + 2, o.hair[1]) end
+  if o.hood then blob(im, hx, hy + 1.2, hr + 0.8, hr + 0.6, o.hood) end
+  headTop(im, o, hx, hy, hr)
+  if o.hands then                                       -- hands on the head (cower)
+    for _, h in ipairs(o.hands) do disc(im, h[1], h[2], 1.05, S[2]); px(im, h[1] - 0.5, h[2] - 0.5, S[3]) end
+  end
+  outline(im, "K")
+  return im
+end
+
+-- lying body, head up. pose "dead" = face down, limbs flung; "down" = on its back, knees up
+local function lying(o, pose)
+  local im = img(16, 16)
+  local J, A, S, Lg = o.jacket, o.sleeve or o.jacket, o.skin, o.legs or {"K", "k", "d"}
+  local front = pose == "down"
+  -- legs + shoes
+  local legs = front and {{6.8, 9.6, 6.3, 13.2}, {9.2, 9.6, 10.4, 12.8}} or {{6.6, 9.6, 4.8, 13.5}, {9.4, 9.6, 11.3, 13.1}}
+  for _, l in ipairs(legs) do
+    capsule(im, l[1], l[2], l[3], l[4], 1.35, Lg)
+    disc(im, l[3], l[4] + 0.6, 1.1, o.shoe or "k")
+  end
+  if o.flare then blob(im, 8, 10.2, 3.9, 2.3, o.flare) end
+  -- arms
+  local arms = front and {{5.2, 6.4, 3.3, 10.2}, {10.8, 6.2, 12.2, 3.3}} or {{5.2, 6.2, 2.4, 3.0}, {10.8, 6.8, 13.6, 10.0}}
+  for _, a in ipairs(arms) do
+    capsule(im, a[1], a[2], a[3], a[4], 1.1, A)
+    disc(im, a[3] + (a[3] - a[1]) * 0.18, a[4] + (a[4] - a[2]) * 0.18, 0.9, S[2])
+  end
+  blob(im, 8, 7.6, 3.5, 3.1, J)
+  details(im, o, 8, 7.6, front and "front" or "back")
+  -- head
+  local hx, hy, hr = 8, 3.3, 2.4
+  local st = o.style or "short"
+  if st == "long" then blob(im, hx, hy + (front and -0.6 or 0.6), hr + 1.1, hr + 0.4, o.hair) end
+  if st == "bald" then sphere(im, hx, hy, hr, S)
+  elseif front then                                    -- face up: skin, hair on the crown, closed eyes
+    sphere(im, hx, hy, hr, S)
+    for y = math.floor(hy - hr), math.floor(hy - 0.4) do for x = hx - 3, hx + 3 do
+      if opaque(im, x, y) and (y + 0.5 - hy) < -0.4 - math.abs(x + 0.5 - hx) * 0.15 then px(im, x, y, o.hair[2]) end
+    end end
+    px(im, hx - 2, hy + 0.3, S[1]); px(im, hx + 1, hy + 0.3, S[1])
+  else sphere(im, hx, hy, hr, o.hair) end
+  -- lost headwear lies beside the body
+  if st == "hat" then disc(im, 13, front and 13 or 2.8, 2.4, o.hat[2]); disc(im, 13, front and 13 or 2.8, 1.2, o.band or "n")
+  elseif st == "hardhat" then sphere(im, 13, front and 13 or 2.6, 1.9, o.hat) end
+  if o.cap then
+    local cy = front and 13 or 2.6
+    sphere(im, 13, cy, 1.9, o.cap); px(im, 12, math.floor(cy) + 2, "K"); px(im, 13, math.floor(cy) + 2, "K"); px(im, 13, math.floor(cy), o.badge or "L")
+  end
+  outline(im, "K")
+  return im
+end
+
 -- ================================================================= PLAYER ==
 local player = sheet("player", 16, 16)
 local JACKET = {"O", "y", "Y", "c"}
@@ -2251,7 +2614,272 @@ do
   im:drawImage(body, Point(0, 0))
   add(player, "dead", {im})
 end
+-- punch: 0 = right arm thrown forward, fist past the head; 1 = back in guard
+local PLAYER_FIG = {jacket = JACKET, hair = HAIR, skin = {"N", "o", "t"}, style = "player"}
+local function withPose(base, pose) local o = {}; for k, v in pairs(base) do o[k] = v end; for k, v in pairs(pose) do o[k] = v end; return o end
+local PUNCH = {
+  {stepL = -2, stepR = 2, armL = {4.6, 10.4}, armR = {10.9, 5.4}, lenR = 3.0, fist = {10, 1}},
+  {stepL = -2, stepR = 2, armL = {5.2, 7.2}, armR = {10.8, 7.2}},
+}
+add(player, "punch", {fig(withPose(PLAYER_FIG, PUNCH[1])), fig(withPose(PLAYER_FIG, PUNCH[2]))}, 110)
+-- down (appended, carjack-v1): knocked flat on his back, face up, knees up, not dead (no blood)
+add(player, "down", {lying(withPose(PLAYER_FIG, {legs = {"K", "k", "d"}}), "down")})
 save(player)
+
+-- =================================================================== PEDS ==
+-- 16x16, same construction and scale as the player. Outfit k has tags
+-- ped<k>_idle|walk|run|punch|shoot|cower|down|dead; burning / burnt are shared.
+local peds = sheet("peds", 16, 16)
+local SKIN = { pale = {"o", "p", "c"}, tan = {"N", "o", "t"}, brown = {"n", "N", "o"}, deep = {"K", "n", "N"} }
+local HAIRS = {
+  black = {"K", "k", "A", "b"}, brown = {"K", "n", "N", "o"}, blond = {"N", "y", "L", "Y"},
+  grey = {"d", "m", "l", "x"}, ginger = {"n", "O", "y"},
+}
+local DENIM, BLACKJ = {"w", "W", "v"}, {"K", "k", "d"}
+local OUTFITS = {
+  [0] = {jacket = {"e", "E", "f", "F"}, legs = DENIM, skin = SKIN.tan, hair = HAIRS.black},                 -- teal jacket
+  {jacket = {"k", "a", "A", "b"}, legs = BLACKJ, skin = SKIN.pale, hair = HAIRS.grey, collar = "x", tie = "R"}, -- suit
+  {jacket = {"u", "U", "P"}, sleeve = SKIN.pale, flare = {"u", "U", "P"}, legs = SKIN.pale, skin = SKIN.pale,
+   hair = HAIRS.blond, style = "long", shoe = "r"},                                                        -- lilac dress
+  {jacket = {"y", "L", "j"}, stripe = "l", legs = DENIM, skin = SKIN.deep,
+   hair = HAIRS.black, style = "hardhat", hat = {"m", "l", "x"}},                                           -- hi-vis, white hard hat
+  {jacket = {"r", "R", "p"}, straps = "W", legs = DENIM, skin = SKIN.tan, hair = HAIRS.brown,
+   style = "hat", hat = {"o", "Y", "c"}, band = "n", shoe = "n"},                                           -- farmer, straw hat
+  {jacket = {"g", "G", "h", "H"}, hood = {"g", "G", "h"}, legs = BLACKJ, skin = SKIN.brown, hair = HAIRS.black}, -- mint hoodie
+  {jacket = {"r", "R", "p"}, sleeve = {"R", "p", "c"}, flare = {"B", "W", "C"}, legs = SKIN.tan, skin = SKIN.tan,
+   hair = HAIRS.ginger, style = "pony", shoe = "K"},                                                        -- blouse + navy skirt
+  {jacket = {"d", "m", "l"}, straps = "d", legs = {"d", "m", "l"}, skin = SKIN.brown, hair = HAIRS.black,
+   style = "hardhat", hat = {"y", "L", "Y"}},                                                               -- grey coveralls, yellow hard hat
+  {jacket = {"K", "k", "a", "d"}, legs = DENIM, skin = SKIN.brown, style = "bald", hair = HAIRS.black},     -- leather jacket, bald
+  {jacket = {"W", "v", "V"}, flare = {"s", "S", "t"}, legs = SKIN.pale, skin = SKIN.pale, hair = HAIRS.grey,
+   style = "bun", shoe = "n"},                                                                              -- old lady, cardigan
+}
+local WALK = {
+  {stepL = -4, stepR = 3,  armL = {4.2, 10.5}, armR = {11.8, 7.5}},
+  {stepL = -1, stepR = 0},
+  {stepL = 3,  stepR = -4, armL = {4.2, 7.5},  armR = {11.8, 10.5}},
+  {stepL = 0,  stepR = -1},
+}
+local RUN = {                                          -- longer stride, arms bent and pumping
+  {stepL = -5, stepR = 4,  armL = {4.6, 11.2}, armR = {11.4, 6.2}, lenL = 2.0, lenR = 2.0},
+  {stepL = -1, stepR = 1,  armL = {4.4, 9.4},  armR = {11.6, 8.6}, lenL = 2.0, lenR = 2.0},
+  {stepL = 4,  stepR = -5, armL = {4.6, 6.2},  armR = {11.4, 11.2}, lenL = 2.0, lenR = 2.0},
+  {stepL = 1,  stepR = -1, armL = {4.4, 8.6},  armR = {11.6, 9.4}, lenL = 2.0, lenR = 2.0},
+}
+local SHOOT = {gun = true, armR = {11, 5}, armL = {8.5, 6}}
+local COWER = {torso = {8, 9.8, 4.0, 2.6}, hy = 8.6, hr = 2.6, armL = {4.6, 8.4}, armR = {11.4, 8.4},
+  lenL = 2.0, lenR = 2.0, stepL = 2.5, stepR = 2.5, hands = {{6.6, 7.4}, {9.4, 7.4}}}
+for k = 0, #OUTFITS do
+  local o, n = OUTFITS[k], "ped" .. k
+  local function f(pose) return fig(withPose(o, pose or {})) end
+  add(peds, n .. "_idle", {f()})
+  add(peds, n .. "_walk", {f(WALK[1]), f(WALK[2]), f(WALK[3]), f(WALK[4])}, 120)
+  add(peds, n .. "_run", {f(RUN[1]), f(RUN[2]), f(RUN[3]), f(RUN[4])}, 80)
+  add(peds, n .. "_punch", {f(PUNCH[1]), f(PUNCH[2])}, 110)
+  add(peds, n .. "_shoot", {f(SHOOT)})
+  add(peds, n .. "_cower", {f(COWER)})
+  add(peds, n .. "_down", {lying(o, "down")})
+  add(peds, n .. "_dead", {lying(o, "dead")})
+end
+
+-- fire: bright core, ordered dither, tongues trailing behind the runner (+y). Like fx:fire, no outline.
+local FIRE = {"r", "O", "y", "L", "j"}
+local function flame(im, cx, cy, rx, ry, rnd, gain)
+  for y = math.floor(cy - ry - 1), math.ceil(cy + ry + 1) do
+    for x = math.floor(cx - rx - 1), math.ceil(cx + rx + 1) do
+      local dx, dy = (x + 0.5 - cx) / rx, (y + 0.5 - cy) / ry
+      local d = math.sqrt(dx*dx + dy*dy)
+      if d <= 1 then
+        local v = (1 - d) * (gain or 1.2) + (rnd() - 0.5) * 0.35
+        if v > 0.08 and x >= 0 and y >= 0 and x < 16 and y < 16 then px(im, x, y, ramp(FIRE, v, x, y)) end
+      end
+    end
+  end
+end
+do
+  local frames = {}
+  local char = {jacket = {"K", "k", "n"}, hair = {"K", "k", "n"}, skin = {"K", "n", "N"}, legs = {"K", "k", "d"}, style = "player"}
+  for i = 1, 3 do
+    local rnd = localRnd(4100 + i)
+    local im = fig(withPose(char, RUN[i == 2 and 3 or (i == 3 and 2 or 1)]))
+    flame(im, 8, 11.2, 4.8, 3.8, rnd, 1.0)
+    sphere(im, 8, 8, 2.5, {"K", "k", "n"})                -- charring head shows through
+    flame(im, 8, 9.2 - (i % 2) * 0.5, 1.6, 2.2, rnd, 1.1)
+    flame(im, 5.4 + (i - 2) * 0.6, 13.6, 1.6, 2.4, rnd, 1.3)
+    flame(im, 10.6 - (i - 2) * 0.6, 13.2 + (i % 2), 1.4, 2.2, rnd, 1.3)
+    flame(im, 8 + (i - 2), 3.2 + (i % 2), 1.1, 1.8, rnd, 1.2)
+    for _ = 1, 3 do px(im, 2 + math.floor(rnd() * 12), 1 + math.floor(rnd() * 14), rnd() < 0.5 and "L" or "O") end
+    frames[#frames + 1] = im
+  end
+  add(peds, "burning", frames, 90)
+end
+do
+  local char = {jacket = {"K", "k", "n"}, hair = {"K", "k", "n"}, skin = {"K", "k", "n"}, legs = {"K", "k", "n"}, shoe = "K"}
+  local im = lying(char, "dead")
+  local rnd = localRnd(4200)
+  local placed = 0
+  while placed < 9 do                                   -- embers and ash on the body
+    local x, y = 2 + math.floor(rnd() * 12), 1 + math.floor(rnd() * 14)
+    local c = get(im, x, y)
+    if pc.rgbaA(c) > 0 and c ~= C.K then
+      px(im, x, y, placed < 3 and "O" or (placed < 4 and "L" or "d")); placed = placed + 1
+    end
+  end
+  add(peds, "burnt", {im})
+end
+-- cops (cops-v1 K2, appended): navy uniform, peaked cap with a gold badge, badge
+-- glint on the shoulder. Same tags as ped<k> minus cower, plus _shotgun (both hands).
+do
+  local NAVY, TROUSERS, CAP = {"k", "w", "B", "W"}, {"K", "k", "w"}, {"m", "l", "x"}   -- white-topped cap: the head pops off the navy
+  local COPS = {
+    [0] = {jacket = NAVY, legs = TROUSERS, skin = SKIN.tan, hair = HAIRS.black, cap = CAP, badge = "L", shoe = "K"},
+    {jacket = NAVY, legs = TROUSERS, skin = SKIN.pale, hair = HAIRS.ginger, style = "pony", cap = CAP, badge = "L", shoe = "K"},
+    {jacket = NAVY, sleeve = {"B", "W", "v"}, legs = TROUSERS, skin = SKIN.deep, hair = HAIRS.black, cap = CAP, badge = "L", shoe = "K"},
+  }
+  local SHOTGUN = {long = true, armL = {8.2, 5.6}, lenL = 2.6, armR = {11.2, 6.6}, lenR = 2.3}
+  for k = 0, #COPS do
+    local o, n = COPS[k], "cop" .. k
+    local function f(pose) return fig(withPose(o, pose or {})) end
+    add(peds, n .. "_idle", {f()})
+    add(peds, n .. "_walk", {f(WALK[1]), f(WALK[2]), f(WALK[3]), f(WALK[4])}, 120)
+    add(peds, n .. "_run", {f(RUN[1]), f(RUN[2]), f(RUN[3]), f(RUN[4])}, 80)
+    add(peds, n .. "_punch", {f(PUNCH[1]), f(PUNCH[2])}, 110)
+    add(peds, n .. "_shoot", {f(SHOOT)})
+    add(peds, n .. "_down", {lying(o, "down")})
+    add(peds, n .. "_dead", {lying(o, "dead")})
+    add(peds, n .. "_shotgun", {f(SHOTGUN)})
+  end
+end
+-- mobs (gangs-v1 G2, appended): the torso colour is the read. Moretti = black hair + red tee,
+-- Orlov = blonde + black, Orchid = black hair + deep purple. Tags = ped<k>'s plus _shotgun.
+do
+  local TEE_RED, BLACK, PURPLE = {"r", "R", "R"}, {"K", "k", "a", "d"}, {"u", "U", "U"}
+  local BLACKLEG, PLATINUM = {"K", "k", "d"}, {"s", "S", "Y", "c"}   -- ash-platinum: not the gold of the hard hats
+  local MOBS = {
+    moretti = {
+      [0] = {jacket = TEE_RED, cuff = true, legs = BLACKLEG, skin = SKIN.tan, hair = HAIRS.black,
+             slick = "b", chain = "L", shoe = "K"},                                              -- slicked hair, gold chain
+      {jacket = TEE_RED, vest = {"K", "k"}, legs = BLACKLEG, skin = SKIN.pale, hair = HAIRS.black, shoe = "n"}, -- waistcoat over the tee
+    },
+    orlov = {
+      [0] = {jacket = BLACK, track = "x", legs = {"K", "k", "a"}, skin = SKIN.pale, hair = PLATINUM, shoe = "x"}, -- black tracksuit
+      {jacket = {"K", "k", "a", "b"}, collar = "d", legs = BLACKLEG, skin = SKIN.pale, hair = PLATINUM,
+       shoe = "K"},                                                                  -- black leather jacket
+    },
+    orchid = {
+      [0] = {jacket = PURPLE, cuff = true, legs = BLACKLEG, skin = SKIN.tan, hair = HAIRS.black, shoe = "K"},  -- short cut, purple tee
+      {jacket = PURPLE, hem = "K", legs = BLACKLEG, skin = SKIN.tan, hair = HAIRS.black, style = "pony", shoe = "K"}, -- bomber + ponytail
+    },
+  }
+  local SHOTGUN = {long = true, armL = {8.2, 5.6}, lenL = 2.6, armR = {11.2, 6.6}, lenR = 2.3}
+  for _, mob in ipairs({"moretti", "orlov", "orchid"}) do
+    for k = 0, 1 do
+      local o, n = MOBS[mob][k], mob .. k
+      local function f(pose) return fig(withPose(o, pose or {})) end
+      add(peds, n .. "_idle", {f()})
+      add(peds, n .. "_walk", {f(WALK[1]), f(WALK[2]), f(WALK[3]), f(WALK[4])}, 120)
+      add(peds, n .. "_run", {f(RUN[1]), f(RUN[2]), f(RUN[3]), f(RUN[4])}, 80)
+      add(peds, n .. "_punch", {f(PUNCH[1]), f(PUNCH[2])}, 110)
+      add(peds, n .. "_shoot", {f(SHOOT)})
+      add(peds, n .. "_cower", {f(COWER)})
+      add(peds, n .. "_down", {lying(o, "down")})
+      add(peds, n .. "_dead", {lying(o, "dead")})
+      add(peds, n .. "_shotgun", {f(SHOTGUN)})
+    end
+  end
+end
+save(peds)
+
+-- ================================================================ ANIMALS ==
+-- 24x32 cells: a cow is ~10 px wide and ~28 long (a 2.4 m cow at sedan scale),
+-- head up, centred. Look follows the old props:cow (white, black patches, dark head).
+local animals = sheet("animals", 24, 32)
+local function patch(im, cx, cy, r)                   -- irregular black patch, only on the coat
+  for _, d in ipairs({{0, 0, 1}, {0.7, 0.45, 0.7}, {-0.55, 0.6, 0.55}, {0.2, -0.7, 0.5}}) do
+    local ox, oy, rr = cx + d[1] * r, cy + d[2] * r, d[3] * r
+    for y = math.floor(oy - rr - 1), math.ceil(oy + rr + 1) do for x = math.floor(ox - rr - 1), math.ceil(ox + rr + 1) do
+      local dx, dy = x + 0.5 - ox, y + 0.5 - oy
+      if dx*dx + dy*dy <= rr*rr then onto(im, x, y, "K") end
+    end end
+  end
+end
+local function bovine(o)
+  local im = img(24, 32)
+  local coat, head = o.bull and {"n", "N", "o"} or {"l", "x", "x"}, o.bull and {"K", "k", "n"} or {"K", "k", "d"}
+  local hx, hy = 12 + (o.hdx or 0), 6 + (o.hdy or 0)
+  if o.side then                                        -- dead: lying on its side, legs out to the right
+    for _, l in ipairs({{14.5, 11, 21, 10}, {15, 13.5, 21.5, 14.5}, {15, 21.5, 21.5, 20.5}, {14.5, 24, 21, 25}}) do
+      capsule(im, l[1], l[2], l[3], l[4], 1.1, coat)
+      disc(im, l[3], l[4], 1.0, "k")
+    end
+    blob(im, 11, 17.5, 5.8, 8.8, coat)
+    if not o.bull then
+      for _, s in ipairs({{9, 13, 2.2}, {12.5, 20, 2.6}, {8.5, 22.5, 1.4}, {13.5, 12, 1.2}}) do
+        patch(im, s[1], s[2], s[3])
+      end
+      blob(im, 16, 21, 1.5, 1.8, {"R", "p", "c"})           -- udder
+    end
+    for y = 9, 26 do for x = 14, 17 do                      -- belly in shade
+      local c = get(im, x, y)
+      if pc.rgbaA(c) > 0 and not opaque(im, x + 1, y) then px(im, x, y, o.bull and "n" or "l") end
+    end end
+    capsule(im, 11, 26, 10, 29.5, 0.7, {"k", "d", "m"}); disc(im, 10, 29.8, 0.9, "K")   -- tail
+    blob(im, 9.5, 6.5, 2.5, 3.4, head)
+    blob(im, 9.2, 3.8, 1.9, 1.3, {"R", "p", "c"})           -- muzzle
+    hx, hy = 9.5, 6.5
+  else
+    local sf, sb = o.sf or 0, o.sb or 0
+    for _, l in ipairs({{7.6, 11.5 + sf}, {16.4, 11.5 - sf}, {7.8, 23.5 + sb}, {16.2, 23.5 - sb}}) do
+      blob(im, l[1], l[2], 1.2, 1.7, coat); px(im, l[1] + (l[1] < 12 and -1 or 0), l[2] + 1, "k")
+    end
+    local tl = o.tail or 0
+    capsule(im, 12, 25, 12 + tl, o.run and 30 or 29, 0.7, {"k", "d", "m"}); disc(im, 12 + tl, o.run and 30.3 or 29.3, 0.9, "K")
+    blob(im, 12, 17.5, 4.8, 8.5, coat)
+    if o.bull then blob(im, 12, 13, 5.3, 4.2, coat); blob(im, 12, 12.4, 2.4, 3, {"n", "N", "o"}) -- hump
+    else
+      for _, s in ipairs({{10, 13, 1.9}, {14.2, 19.5, 2.3}, {10.8, 22.5, 1.5}, {13.8, 11.2, 1.1}, {9.2, 18.2, 1.1}}) do
+        patch(im, s[1], s[2], s[3])
+      end
+    end
+    blob(im, 12 + (o.hdx or 0) * 0.5, 9.4 + (o.hdy or 0) * 0.5, 2.2, 1.8, head)   -- neck
+    blob(im, hx, hy, 2.5, 3.3, head)
+    blob(im, hx, hy - 2.6, 1.9, 1.3, {"R", "p", "c"})     -- muzzle
+    px(im, hx - 1, hy - 3, "K"); px(im, hx, hy - 3, "K")  -- nostrils
+  end
+  -- ears + horns at the back of the head
+  if o.side then
+    px(im, hx - 3, hy + 1, "k"); px(im, hx + 2, hy + 1, "k")
+    if o.bull then art(im, hx - 5, hy - 1, {"Tc...", ".sTc."}); art(im, hx + 2, hy - 1, {"...cT", ".cTs."}) else px(im, hx - 2, hy, "c"); px(im, hx + 1, hy, "c") end
+    if o.bull then px(im, hx - 1, hy - 4, "Y"); px(im, hx, hy - 4, "Y") end
+  else
+    art(im, hx - 4, hy + 1, {"kk"}, nil); art(im, hx + 2, hy + 1, {"kk"})
+    px(im, hx - 4, hy + 1, "p"); px(im, hx + 3, hy + 1, "p")
+    if o.bull then
+      art(im, hx - 6, hy - 2, {"c....", "Tc...", ".sTT."})
+      art(im, hx + 1, hy - 2, {"....c", "...cT", ".TTs."})
+      px(im, hx - 1, hy - 4, "Y"); px(im, hx, hy - 4, "Y")    -- nose ring
+    else
+      px(im, hx - 2, hy, "c"); px(im, hx + 1, hy, "c")
+    end
+  end
+  outline(im, "K")
+  return im
+end
+for _, kind in ipairs({"cow", "bull"}) do
+  local b = kind == "bull"
+  local function f(t) t.bull = b; return bovine(t) end
+  add(animals, kind .. "_idle", {f{}, f{hdx = -0.6, hdy = -0.6}}, 700)
+  add(animals, kind .. "_walk", {
+    f{sf = 1.5, sb = -1.5, tail = -1}, f{hdy = 0.4}, f{sf = -1.5, sb = 1.5, tail = 1}, f{hdy = 0.4},
+  }, 180)
+  add(animals, kind .. "_run", {
+    f{sf = -2.5, sb = 2.5, run = true, hdy = -1}, f{sf = 1, sb = -1.5, run = true, hdy = -0.5},
+    f{sf = -1.5, sb = 2, run = true, hdy = -1, tail = 1}, f{sf = 1.5, sb = -2, run = true, hdy = -0.5, tail = -1},
+  }, 90)
+  add(animals, kind .. "_dead", {f{side = true}})
+end
+save(animals)
+end
 
 -- ================================================================== PROPS ==
 local props = sheet("props", 16, 16)
@@ -2689,6 +3317,19 @@ do -- molotov bottle in flight, neck up, lit rag (2 flicker frames)
     outline(im, "K"); frames[#frames + 1] = im
   end
   add(props, "molotov_proj", frames, 120)
+end
+do -- wallet pickup (peds v1): brown fold, a banknote peeking out, brass clasp. ~8x6 visible
+  local im = img(16, 16)
+  art(im, 5, 5, {
+    ".HHHH...",
+    "oooooooo",
+    "oNNNNNNn",
+    "oNNNNYNn",
+    "onnnnnnn",
+    "Nnnnnnnn",
+  })
+  px(im, 6, 5, "h"); px(im, 9, 5, "G")
+  outline(im, "K"); add(props, "wallet", {im})
 end
 save(props)
 
@@ -3288,7 +3929,9 @@ end
 -- a cheap deterministic hash (the art below must not touch math.random)
 local function hash(a, b) local h = (a * 73856093 + b * 19349663) % 1000003; return (h * 7919 % 1000003) / 1000003 end
 local ships = sheet("ships", 192, 976)
-do
+-- empty = true: the same ship with closed hatch covers in every slot (ambient-v1: the cranes
+-- draw loaded boxes from port:container_* on top, so the deck can fill and empty)
+local function shipImage(empty)
   local im = img(192, 976)
   local cx, y0 = 96, 8
   local hull = hullMask(cx, y0, 176, 960, 150, 22)
@@ -3314,7 +3957,15 @@ do
     rect(im, cx - 86, by - 4, 172, 2, "d"); rect(im, cx - 86, by - 3, 172, 1, "l")   -- hatch coaming
     for i = 0, 5 do
       local x0 = cx - 84 + i * 28
-      if hash(bay, i) < 0.92 then
+      if empty then                                                              -- hatch cover panel
+        rect(im, x0, by, 27, 72, "K")
+        rect(im, x0, by, 26, 71, "A")
+        for xx = x0 + 4, x0 + 22, 6 do rect(im, xx, by + 5, 1, 61, "a") end          -- stiffening ribs
+        rect(im, x0, by, 26, 1, "b"); rect(im, x0, by, 1, 71, "b")
+        rect(im, x0 + 25, by, 1, 71, "a"); rect(im, x0, by + 70, 26, 1, "a")
+        for _, p in ipairs({{1, 1}, {23, 1}, {1, 68}, {23, 68}}) do rect(im, x0 + p[1], by + p[2], 2, 2, "d"); px(im, x0 + p[1], by + p[2], "m") end -- twistlock sockets
+        if i % 3 == 2 then rect(im, x0 + 26, by, 1, 72, "l") end                   -- seam between cover panels
+      elseif hash(bay, i) < 0.92 then
         local c = COLS[math.floor(hash(i + 11, bay + 5) * #COLS) + 1]
         rect(im, x0, by, 27, 72, "K")
         rect(im, x0, by, 26, 71, c[2])
@@ -3347,8 +3998,10 @@ do
   for _, s in ipairs({-1, 1}) do disc(im, cx + s * 30, y0 + 918, 6, "K"); disc(im, cx + s * 30, y0 + 918, 5, "d"); disc(im, cx + s * 30 - 1, y0 + 917, 2, "m") end
   rect(im, cx - 20, y0 + 944, 40, 4, "x")
   outline(im, "K")
-  add(ships, "container_ship", {im})
+  return im
 end
+add(ships, "container_ship", {shipImage(false)})
+add(ships, "container_ship_empty", {shipImage(true)})   -- appended (ambient-v1)
 -- replay the RNG draws the old 64x224 container ship made (seed 314, then the
 -- same calls), so every sheet generated after this one keeps its random stream
 do
@@ -3454,8 +4107,11 @@ do -- motorboat 32x88: red sheer stripe, windscreen, seats, outboard
   outline(im, "K")
   add(boats, "motorboat", {im})
 end
-do -- ship-to-shore gantry crane from above: legs on the quay at the bottom of the cell,
-   -- boom pointing up over the water, outreach ~190 px past the waterside legs
+-- ship-to-shore gantry crane from above: legs on the quay at the bottom of the cell,
+-- boom pointing up over the water, outreach ~190 px past the waterside legs.
+-- part = "full" (the static crane), "gantry" (no trolley / spreader / cab: the
+-- ambient-v1 cranes draw those as port: sprites) ; lamp = tip lights lit (gantry only)
+local function craneImage(part, lamp)
   local im = img(64, 208)
   local cx = 32
   local wy, ly = 188, 200                                                        -- waterside / landside leg rows
@@ -3477,17 +4133,77 @@ do -- ship-to-shore gantry crane from above: legs on the quay at the bottom of t
   -- hinge line: the boom tilts up here (the waterside half is lighter)
   rect(im, cx - 8, wy - 12, 16, 3, "K"); rect(im, cx - 7, wy - 11, 14, 1, "l")
   -- trolley with the spreader hanging below, and the operator cab beside it
+  if part == "full" then
   rect(im, cx - 9, 90, 18, 14, "K"); rect(im, cx - 8, 91, 16, 12, "d"); rect(im, cx - 8, 91, 16, 2, "m")
   rect(im, cx - 12, 94, 24, 6, "K"); rect(im, cx - 11, 95, 22, 4, "L"); rect(im, cx - 11, 95, 22, 1, "Y")  -- spreader
   rect(im, cx + 9, 106, 8, 10, "K"); rect(im, cx + 10, 107, 6, 8, "x"); rect(im, cx + 10, 107, 6, 3, "C")  -- cab
+  end
   -- machinery house over the landside legs
   shape(im, 0, 0, 63, 207, inBox(cx - 12, 192, cx + 11, 206), {"l", "x", "x"}, 1)
   rect(im, cx - 10, 194, 20, 4, "E"); rect(im, cx - 10, 200, 20, 1, "l")
-  px(im, cx - 12, 2, "z"); px(im, cx + 11, 2, "z")                                -- tip warning lights
+  if part == "full" then px(im, cx - 12, 2, "z"); px(im, cx + 11, 2, "z")      -- tip warning lights
+  else                                                                          -- lamp housings, lit / dark
+    for _, x in ipairs({cx - 12, cx + 11}) do px(im, x, 2, lamp and "z" or "r"); px(im, x, 3, lamp and "p" or "K") end
+  end
   outline(im, "K")
-  add(boats, "crane", {im})
+  return im
 end
+add(boats, "crane", {craneImage("full")})
+-- appended (ambient-v1): frame 0 = warning lamps dark, 1 = lit (blink between them)
+add(boats, "crane_gantry", {craneImage("gantry", false), craneImage("gantry", true)}, 600)
 save(boats)
+
+-- =================================================================== PORT ==
+-- 48x96 cells, centred, deterministic (no R()). Moving parts of the gantry crane
+-- and loose containers at the scale of the ship's deck boxes (26x71 + outline).
+do
+  local port = sheet("port", 48, 96)
+  local cx, cy = 24, 48
+  do -- trolley: rides the boom rails (wheels outside the 14-px boom), rope sheaves on top,
+     -- operator cab hanging off its right side. Anchor = trolley body centre = cell centre.
+    local im = img(48, 96)
+    for _, s in ipairs({{-10, -7}, {7, -7}, {-10, 4}, {7, 4}}) do rect(im, cx + s[1], cy + s[2], 3, 3, "K"); px(im, cx + s[1] + 1, cy + s[2] + 1, "d") end
+    shape(im, 0, 0, 47, 95, inBox(cx - 9, cy - 8, cx + 8, cy + 7), {"k", "d", "m"}, 1)          -- frame
+    rect(im, cx - 7, cy - 6, 14, 12, "a")
+    for _, s in ipairs({{-4, -3}, {3, -3}, {-4, 3}, {3, 3}}) do                                   -- four rope sheaves
+      disc(im, cx + s[1], cy + s[2], 2.3, "K"); disc(im, cx + s[1], cy + s[2], 1.6, "m"); px(im, cx + s[1] - 1, cy + s[2] - 1, "l")
+    end
+    rect(im, cx - 7, cy - 1, 14, 1, "L")                                                            -- yellow cross member
+    shape(im, 0, 0, 47, 95, inBox(cx + 9, cy + 9, cx + 16, cy + 18), {"l", "x", "x"}, 1)             -- cab (same place as on crane)
+    rect(im, cx + 10, cy + 10, 6, 3, "C"); px(im, cx + 10, cy + 10, "V")
+    rect(im, cx + 9, cy + 7, 2, 2, "d")                                                               -- hanger
+    outline(im, "K")
+    add(port, "crane_trolley", {im})
+  end
+  do -- spreader, empty: long axis up like the containers (share the container's angle).
+     -- Open in the middle, so a box drawn first shows through; twistlock corners, head block.
+    local im = img(48, 96)
+    local x0, y0, w, l = cx - 14, cy - 37, 28, 74
+    shape(im, 0, 0, 47, 95, inBox(cx - 2, y0 + 2, cx + 1, y0 + l - 3), {"y", "L", "Y"}, 1)          -- main telescopic beam
+    for _, yy in ipairs({y0, y0 + l - 4}) do shape(im, 0, 0, 47, 95, inBox(x0, yy, x0 + w - 1, yy + 3), {"y", "L", "Y"}, 1) end -- end beams
+    for _, p in ipairs({{x0, y0}, {x0 + w - 3, y0}, {x0, y0 + l - 3}, {x0 + w - 3, y0 + l - 3}}) do rect(im, p[1], p[2], 3, 3, "K"); px(im, p[1] + 1, p[2] + 1, "m") end -- twistlocks
+    shape(im, 0, 0, 47, 95, inBox(cx - 6, cy - 6, cx + 5, cy + 5), {"y", "L", "Y"}, 1)             -- head block
+    rect(im, cx - 4, cy - 4, 8, 8, "d")
+    for _, s in ipairs({{-2, -2}, {1, -2}, {-2, 1}, {1, 1}}) do rect(im, cx + s[1], cy + s[2], 1, 1, "K"); px(im, cx + s[1], cy + s[2] + 1, "m") end -- rope ends
+    outline(im, "K")
+    add(port, "crane_spreader", {im})
+  end
+  -- containers: exactly the ship's deck box (26x71, corrugation, corner castings), full outline
+  local COLS = {red = {"r", "R", "p"}, teal = {"e", "E", "f"}, blue = {"w", "B", "C"}, yellow = {"y", "L", "Y"},
+    purple = {"u", "U", "P"}, grey = {"m", "l", "x"}, brown = {"n", "o", "Y"}}
+  for _, name in ipairs({"red", "teal", "blue", "yellow", "purple", "grey", "brown"}) do
+    local c, im = COLS[name], img(48, 96)
+    local x0, by = cx - 13, cy - 35
+    rect(im, x0, by, 26, 71, c[2])
+    for yy = by + 3, by + 68, 3 do rect(im, x0 + 1, yy, 24, 1, c[1]) end
+    rect(im, x0, by, 26, 2, c[3]); rect(im, x0, by, 2, 71, c[3])
+    rect(im, x0 + 24, by, 2, 71, c[1]); rect(im, x0, by + 69, 26, 2, c[1])
+    for _, p in ipairs({{0, 0}, {22, 0}, {0, 67}, {22, 67}}) do rect(im, x0 + p[1], by + p[2], 4, 4, "K"); rect(im, x0 + p[1] + 1, by + p[2] + 1, 2, 2, "d") end
+    outline(im, "K")
+    add(port, "container_" .. name, {im})
+  end
+  save(port)
+end
 
 -- ===================================================================== FX ==
 local fx = sheet("fx", 48, 48)

@@ -67,6 +67,38 @@ for (const g of c.gunshops || []) {
   need(!c.obstacles.some((o) => Math.hypot(o.x - g.x, o.y - g.y) < 12 + (o.r || 0)), 'obstacle on the gun store mat: ' + g.name);
 }
 need((c.gunshops || []).some((g) => Math.hypot(g.x - c.spawn.x, g.y - c.spawn.y) <= 40 * TILE), 'no gun store within 40 tiles of the spawn');
+// paint shops (spec paintshop-v1 S1): four, one per city + Ironworks; each bay on dry open ground,
+// off every traffic lane, with nothing solid or parked in it, and a clear drive out to the road
+need(c.paintshops && c.paintshops.length === 4, 'expected 4 paint shops, got ' + (c.paintshops || []).length);
+need(new Set((c.paintshops || []).map((s) => s.district)).size === 4, 'paint shops not in four districts');
+for (const s of c.paintshops || []) {
+  const B = s.bay, bad = [];
+  for (let y = B.y0 + 4; y < B.y1; y += 8) for (let x = B.x0 + 4; x < B.x1; x += 8) {
+    const k = kindPx(x, y);
+    if (solidPx(x, y) || k === 'WATER' || k === 'ROAD' || k === 'BRIDGE') bad.push('ground ' + k);
+    if (City.laneAt(x, y, 8)) bad.push('lane');
+  }
+  if (c.obstacles.some((o) => o.x > B.x0 - (o.r || 0) && o.x < B.x1 + (o.r || 0) && o.y > B.y0 - (o.r || 0) && o.y < B.y1 + (o.r || 0))) bad.push('obstacle');
+  for (const k of ['parked', 'stalls', 'parkSpots', 'roadSpots']) if (c[k].some((q) => q.x > B.x0 - 16 && q.x < B.x1 + 16 && q.y > B.y0 - 16 && q.y < B.y1 + 16)) bad.push(k);
+  need((B.x1 - B.x0) >= 44 && (B.y1 - B.y0) >= 44 && Math.max(B.x1 - B.x0, B.y1 - B.y0) >= 60, 'paint bay too small for a sedan: ' + s.name);
+  // drive out: from the bay centre away from the door until the asphalt, clear of walls and obstacles
+  const ux = -Math.sin(s.ang), uy = Math.cos(s.ang);
+  let road = false;
+  for (let d = 0; d < 240 && !road; d += 4) {
+    const x = s.x + ux * d, y = s.y + uy * d;
+    if (kindPx(x, y) === 'ROAD') { road = true; break; }
+    if (solidPx(x, y)) { bad.push('wall on the way out'); break; }
+    for (const side of [-14, 0, 14]) {
+      const px = x + uy * side, py = y - ux * side;
+      if (c.obstacles.some((o) => Math.hypot(o.x - px, o.y - py) < (o.r || 0) + 2)) { bad.push('obstacle on the way out at ' + tp(px, py)); d = 999; break; }
+    }
+  }
+  if (!road) bad.push('no road within 15 tiles');
+  const doorX = s.x + Math.sin(s.ang) * 48, doorY = s.y - Math.cos(s.ang) * 48;
+  if (!solidPx(doorX, doorY) || !s.b || s.b.sign !== 'PAINT') bad.push('no garage at the head of the bay');
+  need(!bad.length, 'paint shop ' + s.name + ': ' + [...new Set(bad)].join(', '));
+}
+need(c.policeStation && !solidPx(c.policeStation.x, c.policeStation.y) && kindPx(c.policeStation.x, c.policeStation.y) === 'WALK', 'police station hotspot missing or not on a sidewalk');
 const hoodNames = c.neighborhoods.map((h) => h.name);
 need(new Set(hoodNames).size === hoodNames.length, 'duplicate neighbourhood names');
 const streetNames = c.streets.map((s) => s.name);
@@ -123,6 +155,102 @@ const laneStats = { zones: {} };
   laneStats.stops = L.filter((l) => l.stop).length; laneStats.yields = L.filter((l) => l.yield).length;
   laneStats.xings = L.filter((l) => l.xings).length;
 }
+// pedestrian walk graph (City.buildWalks): edges are axis-aligned and join the nodes at their
+// ends, nothing runs over water, a building, a bridge, a highway or a level crossing, crossings
+// are road stretches tied to a real signalised junction (or null), and pens hold their herd on land
+const walkStats = { zones: {} };
+{
+  const Wk = c.walks || [], WN = c.walkNodes || [];
+  need(Wk.length > 0 && WN.length > 0, 'no walk graph');
+  let bad = 0, badX = 0;
+  const badAt = [];
+  for (const w of Wk) {
+    const a = WN[w.from], b = WN[w.to];
+    if (!a || !b || a.x !== w.x0 || a.y !== w.y0 || b.x !== w.x1 || b.y !== w.y1 || !a.edges.includes(w.id) || !b.edges.includes(w.id)
+      || (w.x0 !== w.x1 && w.y0 !== w.y1) || w.x1 < w.x0 || w.y1 < w.y0 || Math.abs(w.len - (w.x1 - w.x0 + w.y1 - w.y0)) > 0.2) { bad++; continue; }
+    for (let d = 0; d <= w.len; d += 4) {
+      const x = w.x0 + Math.sign(w.x1 - w.x0) * d, y = w.y0 + Math.sign(w.y1 - w.y0) * d;
+      const k = KN[c.kind[tile(y) * c.W + tile(x)]], q = City.roadAt(tile(x), tile(y));
+      if (k === 'WATER' || k === 'BUILDING' || k === 'BRIDGE' || solidPx(x, y) || (q && (q.profile === 'highway' || q.xing))) { badAt.push(tp(x, y) + ' ' + k); break; }
+    }
+    if (w.xing) {
+      const nd = w.xing.node === null ? null : c.nodes[w.xing.node];
+      const across = w.x0 === w.x1 ? 'h' : 'v';
+      if (w.xing.axis !== across || (w.xing.node !== null && (!nd || !nd.signal || Math.hypot(nd.x - (w.x0 + w.x1) / 2, nd.y - (w.y0 + w.y1) / 2) > 200))) badX++;
+      if (a.edges.length < 2 || b.edges.length < 2) badX++;
+    }
+  }
+  need(!bad, bad + ' walk edges malformed or not joined to their nodes');
+  need(!badAt.length, badAt.length + ' walks over water, a wall, a bridge, a highway or a level crossing, e.g. ' + badAt.slice(0, 3).join('; '));
+  need(!badX, badX + ' bad crossings (axis, junction or left hanging)');
+  need(WN.every((nd) => nd.edges.length > 0), 'a walk node without edges');
+  const w0 = Wk[0], hit = w0 && City.walkAt(w0.x0 + (w0.x1 - w0.x0) / 2 + 5, w0.y0 + (w0.y1 - w0.y0) / 2 + 5, 24);
+  need(hit && hit.walk.id === w0.id, 'City.walkAt misses a walk');
+  need(City.walksIn(w0.x0, w0.y0, w0.x0 + 1, w0.y0 + 1).some((w) => w.id === w0.id), 'City.walksIn misses a walk');
+  need(!c.props.some((p) => p.sprite === 'cow'), 'cow props left in c.props (cows live in c.pens)');
+  const pens = c.pens || [];
+  need(pens.length > 0, 'no cow pens');
+  for (const p of pens) {
+    let wet = 0, wall = 0;
+    for (let y = tile(p.y0); y <= tile(p.y1); y++) for (let x = tile(p.x0); x <= tile(p.x1); x++) {
+      const k = KN[c.kind[y * c.W + x]];
+      if (k === 'WATER') wet++; else if (k === 'BUILDING') wall++;
+    }
+    need(p.cows > 0 && p.x1 - p.x0 >= 64 && p.y1 - p.y0 >= 64 && !wet && !wall && p.spots.length === p.cows
+      && p.spots.every((s) => s.x >= p.x0 && s.x <= p.x1 && s.y >= p.y0 && s.y <= p.y1), `bad pen ${p.id} at ${tp(p.x0, p.y0)}: ${p.cows} cows, ${wet} water, ${wall} wall tiles`);
+  }
+  for (const w of Wk) { const z = walkStats.zones[w.zone] || (walkStats.zones[w.zone] = { walks: 0, tiles: 0, xings: 0 }); z.walks++; z.tiles += w.len / TILE; if (w.xing) z.xings++; }
+  walkStats.walks = Wk.length; walkStats.nodes = WN.length;
+  walkStats.xings = Wk.filter((w) => w.xing).length; walkStats.signal = Wk.filter((w) => w.xing && w.xing.node !== null).length;
+  walkStats.dead = WN.filter((nd) => nd.edges.length === 1).length;
+  walkStats.pens = pens.length; walkStats.cows = pens.reduce((a, p) => a + p.cows, 0);
+  walkStats.tiles = Wk.reduce((a, w) => a + w.len, 0) / TILE;
+}
+// airport and port route data (City.buildRoutes, spec ambient-v1 §3): stands on dry ground with
+// their obstacles tagged, taxi paths dense and clear of buildings and water, ship slots on water,
+// quay slots and crane legs on the quay
+const routeStats = {};
+{
+  const A = c.airport, Pt = c.port;
+  need(A && A.stands && A.stands.length === 7, 'airport route data missing or not 7 stands');
+  need(Pt && Pt.cranes && Pt.cranes.length === 3 && Pt.ship && Pt.ship.slots.length === 48, 'port data missing (3 cranes, 48 deck slots)');
+  const k = (x, y) => KN[c.kind[tile(y) * c.W + tile(x)]];
+  if (A) {
+    let pts = 0;
+    for (const s of A.stands) {
+      need(!['WATER', 'BUILDING'].includes(k(s.x, s.y)), `stand ${s.id} on ${k(s.x, s.y)}`);
+      need(s.obstacles.length > 0 && s.obstacles.every((o) => o.plane === s.id && c.obstacles.includes(o)), `stand ${s.id} obstacles not tagged`);
+      need(s.sprite && s.sprite.dyn === 'plane' && c.sprites.includes(s.sprite), `stand ${s.id} sprite not flagged dyn`);
+      for (const [name, P] of [['in', A.taxi.in[s.id]], ['out', A.taxi.out[s.id]], ['push', A.taxi.push[s.id]]]) {
+        if (name === 'in' && s.kind === 'runway') { need(!P, 'the runway stand has a taxi-in path'); continue; }
+        need(Array.isArray(P) && (P.length > 1 || name === 'push'), `stand ${s.id} has no taxi ${name} path`);
+        if (!P) continue;
+        pts += P.length;
+        const bad = P.find((p, i) => ['WATER', 'BUILDING'].includes(k(p[0], p[1])) || (i && Math.hypot(p[0] - P[i - 1][0], p[1] - P[i - 1][1]) > 33));
+        need(!bad, `taxi ${name} path of stand ${s.id} hits water/a wall or jumps at ${bad && tp(bad[0], bad[1])}`);
+        const end = P[P.length - 1];
+        if (name === 'in') need(Math.hypot(end[0] - s.x, end[1] - s.y) < 1 && Math.hypot(P[0][0] - A.approach.rollEnd[0], P[0][1] - A.approach.rollEnd[1]) < 1, `taxi in of stand ${s.id} doesn't run rollEnd -> stand`);
+        if (name === 'out') need(Math.hypot(end[0] - A.depart.lineup[0], end[1] - A.depart.lineup[1]) < 1, `taxi out of stand ${s.id} doesn't end at the line-up`);
+      }
+    }
+    for (const [x, y] of [A.approach.touchdown, A.approach.rollEnd, A.depart.lineup, A.depart.rotate]) need(k(x, y) === 'RUNWAY', 'runway point off the runway: ' + tp(x, y));
+    routeStats.air = `airport: ${A.stands.length} stands (${A.stands.map((s) => s.kind).join(', ')}), ${pts} taxi path points`;
+  }
+  if (Pt) {
+    const wet = Pt.ship.slots.filter((s) => k(s.x, s.y) !== 'WATER').length;
+    need(!wet, wet + ' ship slots off the water');
+    const qbad = Pt.quaySlots.filter((s) => k(s.x, s.y) !== 'QUAY' || c.obstacles.some((o) => Math.abs(o.x - s.x) < 36 + o.r && Math.abs(o.y - s.y) < 13.5 + o.r)).length;
+    need(Pt.quaySlots.length > 0 && !qbad, `${qbad} of ${Pt.quaySlots.length} quay slots off the quay or on an obstacle`);
+    for (const cr of Pt.cranes) {
+      need(cr.legs.length === 2 && cr.legs.every((o) => o.crane === cr.id && k(o.x, o.y) === 'QUAY'), `crane ${cr.id} legs untagged or off the quay`);
+      need(cr.sprite && cr.sprite.dyn === 'crane' && cr.bayMin <= cr.x && cr.x <= cr.bayMax && cr.bayMin >= Pt.rail.x0 + 20 && cr.bayMax <= Pt.rail.x1 - 20, `crane ${cr.id} bays or sprite wrong`);
+    }
+    for (let i = 1; i < Pt.cranes.length; i++) need(Pt.cranes[i].bayMin - Pt.cranes[i - 1].bayMax >= 52, `cranes ${i - 1} and ${i} can meet`);
+    routeStats.port = `port: rail y ${tile(Pt.rail.y)} x ${tile(Pt.rail.x0)}-${tile(Pt.rail.x1)}, ${Pt.cranes.length} cranes, ${Pt.ship.slots.length} deck slots, ${Pt.quaySlots.length} quay slots`;
+  }
+}
+const routeLine = () => `${routeStats.air}; ${routeStats.port}`;
+const walkLine = () => `walks ${walkStats.walks} (${Math.round(walkStats.tiles)} tiles), walk nodes ${walkStats.nodes} (${walkStats.dead} dead ends), crossings ${walkStats.xings} (${walkStats.signal} signalised), cow pens ${walkStats.pens} (${walkStats.cows} cows)`;
 const laneLine = () => `lanes ${laneStats.lanes}, nodes ${laneStats.nodes} (${laneStats.int} junctions, ${laneStats.signal} signalised, ${laneStats.turn} U-turn loops), exits ${laneStats.exits}, stop points ${laneStats.stops} (${laneStats.yields} give way), lanes over a level crossing ${laneStats.xings}`;
 
 const counts = {};
@@ -133,6 +261,8 @@ if (checkOnly) {
   console.log('phases (ms): ' + phases);
   console.log(`buildings ${c.buildings.length}, trees ${c.trees.length}, props ${c.props.length}, lamps ${c.lamps.length}, obstacles ${c.obstacles.length}, parked ${c.parked.length}, parkSpots ${c.parkSpots.length}, stalls ${c.stalls.length}, roadSpots ${c.roadSpots.length}, crates ${c.crateSpots.length}, talls ${c.talls.length}, sprites ${c.sprites.length}, signals ${c.trafficLights.length}`);
   console.log(laneLine());
+  console.log(walkLine());
+  console.log(routeLine());
   console.log(`districts ${c.districts.length}, neighbourhoods ${c.neighborhoods.length}, streets ${c.streets.length}, places ${Object.keys(c.places).length}`);
   console.log(problems.length ? 'PROBLEMS:\n  ' + problems.join('\n  ') : 'checks ok');
   process.exit(problems.length ? 1 : 0);
@@ -237,6 +367,32 @@ for (const z of REGIONS) {
   P(`| ${z.id} | ${st.lanes} | ${Math.round(st.tiles)} | ${z.traffic.density} | ${Object.entries(z.traffic.models).map(([m, w]) => `${m} ${w}`).join(', ')} |`);
 }
 P();
+P('### Pedestrians');
+P();
+P(`- ${walkLine()}.`);
+P('- Walks run on the sidewalk centre lines (plus plaza walks, the Shell Beach boardwalk, the terminal kerb, farm tracks and farm-town paths).');
+P('  Crossings are the road stretch only: zebras at both ends of every avenue grid run (tied to the junction\'s lights), one unsignalised corner');
+P('  crossing per street and rough grid run, and court mouths. Density = peds per 100 walk tiles in the AOV (spec peds-v1 §2.1), x0.5 at night.');
+P('  Cops = the share of that budget walking as foot cops (spec cops-v1 §2); within 700 px of the police station it is 30% (src/peds.js).');
+P();
+P('| zone | walks | walk tiles | crossings | density | scared / angry / violent | armed pistol / uzi | cops |');
+P('|---|---|---|---|---|---|---|---|');
+for (const z of REGIONS) {
+  const st = walkStats.zones[z.id] || { walks: 0, tiles: 0, xings: 0 }, pd = z.peds;
+  const pc = (v) => Math.round(v * 100) + '%';
+  P(`| ${z.id} | ${st.walks} | ${Math.round(st.tiles)} | ${st.xings} | ${pd.density} | ${pc(pd.mix.scared)} / ${pc(pd.mix.angry)} / ${pc(pd.mix.violent)} | ${pc(pd.armed.pistol)} / ${pc(pd.armed.uzi)} | ${pc(pd.cops || 0)} |`);
+}
+P();
+P('| pen | where (tiles) | size (tiles) | cows | neighbourhood |');
+P('|---|---|---|---|---|');
+for (const p of c.pens) P(`| ${p.id} | ${tp(p.x0, p.y0)} | ${Math.round((p.x1 - p.x0) / TILE)} x ${Math.round((p.y1 - p.y0) / TILE)} | ${p.cows} | ${City.placeAt(p.x0, p.y0).neighborhood} (${City.placeAt(p.x0, p.y0).district}) |`);
+P();
+P('### Airport flights and port cranes (route data)');
+P();
+P(`- ${routeLine()}.`);
+P('- `c.airport`: arrivals fly north up the runway centre line (approach from, touchdown, rollEnd), taxi in via the mid exit link and the parallel taxiway; departures push back, taxi down the taxiway to the south link, line up at the south end and roll north. `#demo&routes` draws it all.');
+P('- `c.port`: crane rail along the main quay, three crane bay ranges, 48 deck slots on the container ship (8 bays x 6 rows, matching the art) and quay slots between the bollards.');
+P();
 P('### Streets');
 P();
 P('| street | profile | district | from (tiles) | to (tiles) | width |');
@@ -281,6 +437,8 @@ P(`- Spawn ${tp(c.spawn.x, c.spawn.y)} on ${kindPx(c.spawn.x, c.spawn.y)} in ${C
 P(`- Starter car (${c.starterCar.model}) ${tp(c.starterCar.x, c.starterCar.y)} on ${kindPx(c.starterCar.x, c.starterCar.y)}; tank ${tp(c.tankSpot.x, c.tankSpot.y)} on ${kindPx(c.tankSpot.x, c.tankSpot.y)}.`);
 P(`- Boost garage ${tp(c.garage.x, c.garage.y)} in ${City.placeAt(c.garage.x, c.garage.y).neighborhood}.`);
 for (const g of c.gunshops) P(`- Gun store ${g.id} **${g.name}** (${g.area}): door mat ${tp(g.x, g.y)} on ${kindPx(g.x, g.y)}, facing ${['north', 'east', 'south', 'west'][Math.round(((g.ang / (Math.PI / 2)) % 4 + 4) % 4)]}, building ${g.b.tw}x${g.b.th} at (${g.b.tx}, ${g.b.ty}), ${City.placeAt(g.x, g.y).neighborhood}, ${City.placeAt(g.x, g.y).street || 'no street'}; ${(Math.hypot(g.x - c.spawn.x, g.y - c.spawn.y) / TILE).toFixed(0)} tiles from the spawn. \`goto=Gun Store ${g.id + 1}\`, \`demo&shop=${g.id}\`.`);
+for (const s of c.paintshops) P(`- Paint shop ${s.id} **${s.name}** (${s.district}): bay x ${s.bay.x0}-${s.bay.x1}, y ${s.bay.y0}-${s.bay.y1} px (tiles ${tp(s.bay.x0, s.bay.y0)}-${tp(s.bay.x1 - 1, s.bay.y1 - 1)}), car faces ${['north', 'east', 'south', 'west'][Math.round(((s.ang / (Math.PI / 2)) % 4 + 4) % 4)]} to the door, garage ${s.b.tw}x${s.b.th} at (${s.b.tx}, ${s.b.ty}), ${City.placeAt(s.x, s.y).neighborhood}, ${City.placeAt(s.x, s.y).street || 'no street'}. \`goto=Paint Shop ${s.id + 1}\`, \`demo&paint=${s.id}\`.`);
+P(`- Police station (cops' hotspot): front door ${tp(c.policeStation.x, c.policeStation.y)} on ${kindPx(c.policeStation.x, c.policeStation.y)}, ${City.placeAt(c.policeStation.x, c.policeStation.y).neighborhood}.`);
 for (const p of c.phones) P(`- Payphone ${p.district}: ${tp(p.x, p.y)}, ${City.placeAt(p.x, p.y).neighborhood}, ${City.placeAt(p.x, p.y).street || 'no street'}.`);
 P();
 P('### Goto places');

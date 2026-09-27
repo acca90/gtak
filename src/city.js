@@ -63,15 +63,34 @@ const ZONES = {
 // tiles inside the AOV, models = the mix (weights). Lanes carry their zone (City.buildLanes).
 {
   const TRAFFIC = {
-    downtown: [3.0, { sedan: 20, taxi: 18, hatch: 12, suv: 10, bus: 8, van: 6, sport: 4, muscle: 3, ambulance: 3, truck: 2 }],
+    downtown: [5.0, { sedan: 20, taxi: 18, hatch: 12, suv: 10, bus: 8, van: 6, sport: 4, muscle: 3, ambulance: 3, truck: 2 }],
     suburbs: [0.5, { hatch: 25, sedan: 25, suv: 20, pickup: 8, muscle: 4, sport: 3 }],
     industrial: [1.2, { truck: 16, semi: 12, flatbed: 8, tanker: 6, mixer: 6, garbage: 5, van: 6, pickup: 5 }],
     rural: [0.4, { pickup: 14, tractor: 12, truck: 8, flatbed: 6, harvester: 3, suv: 4, hatch: 3, sedan: 3 }],
     highway: [1.2, { sedan: 14, suv: 10, hatch: 8, truck: 8, semi: 6, tanker: 3, bus: 2, sport: 5, muscle: 4, van: 5 }],
-    airport: [1.5, { taxi: 16, sedan: 10, van: 10, bus: 4, suv: 6 }],
+    airport: [2.5, { taxi: 16, sedan: 10, van: 10, bus: 4, suv: 6 }],
     wild: [0.3, { pickup: 12, suv: 12, hatch: 5, sedan: 5, van: 3 }],
   };
   for (const z in TRAFFIC) ZONES[z].traffic = { density: TRAFFIC[z][0], models: TRAFFIC[z][1] };
+  // Pedestrians per zone (spec docs/specs/peds-v1.md §2.1): density = peds alive per 100 tiles
+  // of walk graph inside the AOV; mix = personality shares; armed = share of the violent ones
+  // carrying a pistol / an uzi. Highways and the wild have no sidewalks: density 0.
+  // Densities raised 2026-09-27 after screenshots (downtown read empty).
+  // cops = the share of the peds budget that are foot cops (spec docs/specs/cops-v1.md §2;
+  // the 30% near the police station is applied by src/peds.js around c.policeStation).
+  const PEDS = {
+    downtown: [16, [0.5, 0.35, 0.15], [0.2, 0.05], 0.06],
+    suburbs: [2.5, [0.65, 0.25, 0.1], [0.15, 0.02], 0.03],
+    industrial: [3, [0.35, 0.3, 0.35], [0.3, 0.08], 0.04],
+    rural: [1.5, [0.5, 0.25, 0.25], [0.25, 0.03], 0.02],
+    airport: [6, [0.6, 0.3, 0.1], [0.1, 0], 0.08],
+    highway: [0, [0.65, 0.25, 0.1], [0, 0], 0],
+    wild: [0, [0.65, 0.25, 0.1], [0, 0], 0],
+  };
+  for (const z in PEDS) {
+    const [density, [scared, angry, violent], [pistol, uzi], cops] = PEDS[z];
+    ZONES[z].peds = { density, mix: { scared, angry, violent }, armed: { pistol, uzi }, cops };
+  }
 }
 const ZONE_LIST = Object.values(ZONES);
 const REGIONS = ZONE_LIST;                        // legacy name: the vehicle-mix table
@@ -111,6 +130,14 @@ const GUN_STORES = [
   { name: 'UNION FIREARMS', area: 'MAIN CITY' },     // suburban corner shops by Mercy Hill
   { name: 'ANVIL SURPLUS', area: 'IRONWORKS' },      // army surplus at a warehouse gate
   { name: 'DUSTY BARREL', area: 'ROUTE 6' },         // roadside store by the South-East Farms
+];
+
+// car paint shops (spec docs/specs/paintshop-v1.md): id = index; `goto=Paint Shop <id + 1>`
+const PAINT_SHOPS = [
+  { name: 'CANDY COAT', area: 'MAJOR CITY' },        // suburban corner shops, the car park's far end
+  { name: 'SPRAY SHACK', area: 'SIDE CITY' },
+  { name: 'PASTEL PAINT & BODY', area: 'MAIN CITY' },
+  { name: 'IRON COAT', area: 'IRONWORKS' },          // in a warehouse yard, a gate cut in the fence
 ];
 
 const City = {
@@ -186,7 +213,7 @@ const City = {
       W, H, seed,
       kind: new Uint8Array(N), sub: new Uint8Array(N), frame: new Int16Array(N).fill(-1), solid: new Uint8Array(N),
       buildings: [], trees: [], lamps: [], props: [], obstacles: [], phones: [], talls: [], paints: [],
-      sprites: [], trafficLights: [], cables: [], gunshops: [],
+      sprites: [], trafficLights: [], cables: [], gunshops: [], paintshops: [], pens: [], walkLines: [],
       parkSpots: [], stalls: [], roadSpots: [], crateSpots: [], parked: [], blocks: [],
       districts: [], neighborhoods: [], streets: [], places: {}, landmarks: [], grids: [],
       garage: null, spawn: null, starterCar: null, tankSpot: null, rail: null,
@@ -472,6 +499,16 @@ const City = {
       if (gap) { const mx = (X0 + X1) / 2; fence(style, X0, Y1, mx - gap / 2, Y1); fence(style, mx + gap / 2, Y1, X1, Y1); }
       else fence(style, X0, Y1, X1, Y1);
     };
+    // a cow pen (spec peds-v1 §4): the herd's rect in px, inside the fence with a margin.
+    // `spots` = where the old cow props stood (the same RNG draws, so nothing after moves)
+    const pen = (x0, y0, x1, y1, n, draw) => {
+      const p = { id: c.pens.length, x0, y0, x1, y1, cows: n, spots: [] };
+      for (let k = 0; k < n; k++) { const [x, y, ang] = draw(); p.spots.push({ x: clamp(x, x0, x1), y: clamp(y, y0, y1), ang }); }
+      c.pens.push(p);
+      return p;
+    };
+    // pedestrian ground outside the block rings (px lines, axis-aligned; City.buildWalks)
+    const walkLine = (x0, y0, x1, y1, extra) => c.walkLines.push(Object.assign({ x0, y0, x1, y1 }, extra));
     const weighted = (w) => {
       let r = R() * Object.values(w).reduce((a, b) => a + b, 0);
       for (const k in w) { r -= w[k]; if (r <= 0) return k; }
@@ -939,6 +976,13 @@ const City = {
         for (const [i, j] of [[1.5, 1.5], [A.w - 1.5, 1.5], [1.5, A.h - 1.5], [A.w - 1.5, A.h - 1.5]]) addTree(T(A.x + i), T(A.y + j), 'tree_c');
         addProp('fountain', T(A.x + A.w / 2), T(A.y + A.h / 2), 22, { big: true, anim: true });
         c.crateSpots.push({ x: T(A.x + 4), y: T(A.y + 4) });
+        // a walk around the fountain, with four spokes out to the sidewalk ring
+        const cx = T(A.x + A.w / 2), cy = T(A.y + A.h / 2), h = 56, ry0 = T(b.y0) + b.ring * 8, ry1 = T(b.y1) - b.ring * 8;
+        const rx0 = T(b.x0) + b.ring * 8, rx1 = T(b.x1) - b.ring * 8;
+        walkLine(cx - h, cy - h, cx + h, cy - h); walkLine(cx - h, cy + h, cx + h, cy + h);
+        walkLine(cx - h, cy - h, cx - h, cy + h); walkLine(cx + h, cy - h, cx + h, cy + h);
+        walkLine(cx - 24, ry0, cx - 24, cy - h); walkLine(cx - 24, cy + h, cx - 24, ry1);      // clear of the payphone and ticket machines
+        walkLine(rx0, cy, cx - h, cy); walkLine(cx + h, cy, rx1, cy);
       },
 
       // ---- landmarks inside grids
@@ -1010,6 +1054,8 @@ const City = {
           c.stalls.push(s); park(s, 0.95);
         }
         fenceRect('chain', { x: A.x, y: A.y + 10, w: A.w, h: 4 }, 48);
+        // cops' hotspot (spec cops-v1 §2): the front door, on the north sidewalk's inner edge
+        c.policeStation = { x: T(A.x + 7), y: T(A.y) - 8 };
         landmark('Police Station', T(A.x + 7), T(A.y + 5.5), { kind: 'building', rect: { x: bl.tx, y: bl.ty, w: bl.tw, h: bl.th }, what: '12x9 building, 3 floors, wall police, roof police + helipad, POLICE sign, fenced yard with police cars' });
       },
       // Beira-Rio style: the bowl on a wide paved esplanade (oval bands of paving, trees,
@@ -1266,6 +1312,20 @@ const City = {
         for (let y = A.y; y < A.y + A.h; y++) for (let x = sx; x < sx + 2; x++) setKind(x, y, KIND.DIRT, (x + y) % 2);
         for (let x = A.x; x < A.x + A.w; x++) for (let y = sy; y < sy + 2; y++) setKind(x, y, KIND.DIRT, (x + y) % 2);
         const home = Math.floor(R() * 4);
+        // farmhands walk the access tracks (split at the crossing so the walk graph joins them),
+        // and the farm town's forecourt is ringed by a path joined to the nearest two tracks
+        {
+          const X = T(sx + 1), Y = T(sy + 1);
+          walkLine(X, T(A.y) + 8, X, Y); walkLine(X, Y, X, T(A.y + A.h) - 8);
+          walkLine(T(A.x) + 8, Y, X, Y); walkLine(X, Y, T(A.x + A.w) - 8, Y);
+          if (homeGen) {
+            const Q = quads[home], X0 = T(Q.x) + 8, X1 = T(Q.x + Q.w) - 8, Y0 = T(Q.y) + 8, Y1 = T(Q.y + Q.h) - 8;
+            walkLine(X0, Y0, X1, Y0); walkLine(X0, Y1, X1, Y1); walkLine(X0, Y0, X0, Y1); walkLine(X1, Y0, X1, Y1);
+            const my = T(Q.y + 6) + 8, mx = T(Q.x + 7) + 8;          // the gaps between the town's buildings
+            if (home % 2 === 0) walkLine(X1, my, X, my, { conn: true }); else walkLine(X, my, X0, my, { conn: true });
+            if (home < 2) walkLine(mx, Y1, mx, Y, { conn: true }); else walkLine(mx, Y, mx, Y0, { conn: true });
+          }
+        }
         quads.forEach((Q, i) => {
           if (i === home) return (homeGen || gen.farmstead).call(gen, { A: Q, rg: b.rg, grid: b.grid });
           const crop = Math.floor(R() * CROPS.length);
@@ -1273,7 +1333,7 @@ const City = {
           const mx = T(Q.x + Q.w / 2), my = T(Q.y + Q.h / 2);
           if (CROPS[crop] === 'pasture') {
             fenceRect('wood', Q);
-            for (let k = 0; k < 5; k++) addProp('cow', T(Q.x + 2 + R() * (Q.w - 4)), T(Q.y + 2 + R() * (Q.h - 4)), 6, { rot: R() * Math.PI * 2 });
+            pen(T(Q.x) + 16, T(Q.y) + 16, T(Q.x + Q.w) - 16, T(Q.y + Q.h) - 16, 5, () => [T(Q.x + 2 + R() * (Q.w - 4)), T(Q.y + 2 + R() * (Q.h - 4)), R() * Math.PI * 2]);
             for (let k = 0; k < 3; k++) addProp('haybale', T(Q.x + 1 + R() * (Q.w - 2)), T(Q.y + 1 + R() * (Q.h - 2)), 6);
           } else if (CROPS[crop] === 'wheat') {
             park(spot(mx, my, Math.PI / 2, ['harvester']), 0.7);
@@ -1326,7 +1386,8 @@ const City = {
         const A = b.A;
         fill(A, KIND.FIELD, (x, y) => 6 + (y % 2));
         fenceRect('wood', A, 48);
-        for (let k = 0; k < 12; k++) addProp('cow', T(A.x + 2 + R() * (A.w - 4)), T(A.y + 2 + R() * (A.h - 4)), 6, { rot: R() * Math.PI * 2 });
+        // the herd keeps south of the barn (rows 1-5), clear of the fence
+        pen(T(A.x) + 16, T(A.y + 7), T(A.x + A.w) - 16, T(A.y + A.h) - 16, 12, () => [T(A.x + 2 + R() * (A.w - 4)), T(A.y + 2 + R() * (A.h - 4)), R() * Math.PI * 2]);
         for (let k = 0; k < 6; k++) addTree(T(A.x + 2 + R() * (A.w - 4)), T(A.y + 2 + R() * (A.h - 4)), 'tree_a');
         addBuilding(A.x + 1, A.y + 1, 7, 5, 2, 'barn', { type: 'pitched', mat: 'barn', ridge: 'h' }, b.rg);
       },
@@ -1394,6 +1455,17 @@ const City = {
         if (kindAt(x, y) === KIND.WATER) addProp('buoy', T(x) + 8, T(y) + 8);
       }
       c.crateSpots.push({ x: T(730), y: T(300) });
+      // the boardwalk is a promenade: joined to Side City's east sidewalks across the street
+      {
+        const bx = T(721) + 8, g = G.side;
+        walkLine(bx, T(BEACH.y) + 8, bx, T(BEACH.y + BEACH.h) - 8);
+        for (let j = 0; j < g.ny; j++) {
+          const b = g.blocks[ownerAt(g, g.nx - 1, j)];
+          if (!g.vseg[g.nx][j] || !b || !b.ring) continue;
+          const y = T(g.oy + ROAD + j * g.pitch) + b.ring * 8;
+          if (y > T(BEACH.y) + 8 && y < T(BEACH.y + BEACH.h) - 8) walkLine(T(b.x1) - b.ring * 8, y, bx, y, { conn: true });
+        }
+      }
       landmark('Shell Beach', T(730), T(310), { kind: 'beach', rect: { x: 717, y: BEACH.y, w: 21, h: BEACH.h }, what: 'palm promenade, boardwalk (x 720-722), sand to the sea (~14 tiles), umbrellas, towels, 2 lifeguard huts, buoys' });
 
       // marina: clubhouse + car park on the shore, piers into the cove, moored boats
@@ -1475,10 +1547,15 @@ const City = {
       c.sprites.push({ sheet: 'ships', tag: 'container_ship', x: T(SHIP.x), y: T(SHIP.y), ang: Math.PI / 2, h: 0 });
       c.sprites.push({ sheet: 'boats', tag: 'motorboat', x: T(214), y: T(724), ang: -Math.PI / 2, h: 0 });
       // gantry cranes: legs on the quay, the boom (ang PI = pointing south) over the ship's beam
+      c._cranes = [];                                 // for c.port (City.buildRoutes)
       for (const cx of [280, 296, 312]) {
-        c.sprites.push({ sheet: 'boats', tag: 'crane', x: T(cx), y: T(719.5), ang: Math.PI, h: 150 });
-        for (const dx of [-20, 20]) addObstacle(T(cx) + dx, T(713) + 8, 6);
+        const sp = { sheet: 'boats', tag: 'crane', x: T(cx), y: T(719.5), ang: Math.PI, h: 150, dyn: 'crane' };
+        c.sprites.push(sp);
+        const legs = [];
+        for (const dx of [-20, 20]) legs.push(addObstacle(T(cx) + dx, T(713) + 8, 6));
+        c._cranes.push({ x: T(cx), y: T(719.5), sprite: sp, legs });
       }
+      c._ship = { x: T(SHIP.x), y: T(SHIP.y), ang: Math.PI / 2 };
       for (let i = 0; i < 4; i++) park(spot(T(236 + i * 8), T(735), Math.PI / 2, ['forklift', 'truck']), 0.7);
       for (let i = 0; i < 3; i++) park(spot(T(230 + i * 12), T(713) + 8, Math.PI / 2, ['forklift', 'truck', 'semi']), 0.6);
       c.crateSpots.push({ x: T(214), y: T(735) });
@@ -1532,16 +1609,20 @@ const City = {
       // airliner lined up on the runway
       const planes = [[113, 555, 'airliner', Math.PI / 2], [113, 575, 'airliner', Math.PI / 2], [113, 595, 'airliner', Math.PI / 2],
         [95, 630, 'airliner', 0], [111, 654, 'propplane', -Math.PI / 2], [93, 656, 'propplane', 0], [RW.x + RW.w / 2, 522, 'airliner', Math.PI]];
+      c._planes = [];                                 // stands for c.airport (City.buildRoutes)
       for (const [x, y, tag, ang] of planes) {
-        c.sprites.push({ sheet: 'planes', tag, x: T(x), y: T(y), ang, h: 0 });
-        const big = tag === 'airliner';
+        // dyn: the Flights system (src/airport.js) takes these over; until then they draw as static sprites
+        const sp = { sheet: 'planes', tag, x: T(x), y: T(y), ang, h: 0, dyn: 'plane' };
+        c.sprites.push(sp);
+        const big = tag === 'airliner', obs = [];
         const fx = Math.sin(ang), fy = -Math.cos(ang);
         // fuselage along the nose axis, wings across it (slightly aft of the centre)
-        for (const d of big ? [-120, -80, -40, 0, 40, 80, 120] : [-44, -18, 8, 34]) addObstacle(T(x) + fx * d, T(y) + fy * d, big ? 14 : 8);
+        for (const d of big ? [-120, -80, -40, 0, 40, 80, 120] : [-44, -18, 8, 34]) obs.push(addObstacle(T(x) + fx * d, T(y) + fy * d, big ? 14 : 8));
         for (const sd of big ? [-110, -76, -42, 42, 76, 110] : [-58, -30, 30, 58]) {
           const aft = big ? 10 + Math.abs(sd) * 0.35 : 4;
-          addObstacle(T(x) - fy * sd - fx * aft, T(y) + fx * sd - fy * aft, big ? 10 : 7);
+          obs.push(addObstacle(T(x) - fy * sd - fx * aft, T(y) + fx * sd - fy * aft, big ? 10 : 7));
         }
+        c._planes.push({ x: T(x), y: T(y), ang, tag, sprite: sp, obstacles: obs });
       }
       c.heliport = groundPad(117, 640, 'Heliport');
       groundPad(89, 548, 'Airport North Pad');
@@ -1551,6 +1632,8 @@ const City = {
       fence('chain', T(35), T(706), T(121), T(706));
       for (const [x, y] of [[101, 565], [101, 585], [100, 610], [119, 620], [88, 575]]) park(spot(T(x), T(y), 0, ['van', 'van', 'truck', 'flatbed']), 0.85);
       c.airportPhone = { x: T(137), y: T(551) };
+      c._air = { RW, TW, AP, links: [508, 596, 687] };
+      walkLine(T(133) + 8, T(540) + 8, T(133) + 8, T(609) + 8);          // the terminal kerb
       c.crateSpots.push({ x: T(150), y: T(540) });
       landmark('Pastel Airport', T(108), T(570), { kind: 'airport', rect: A,
         what: `runway ${RW.w}x${RW.h} (x ${RW.x}-${RW.x + RW.w - 1}), parallel taxiway ${TW.w} wide (x ${TW.x}-${TW.x + TW.w - 1}), apron x ${AP.x}-${AP.x + AP.w - 1} with 3 airliner gates, a remote stand and 2 prop planes, terminal 10x62, 2 hangars 16x12, control tower (h 220)`, terminal: { x: term.tx, y: term.ty, w: term.tw, h: term.th } });
@@ -1724,11 +1807,12 @@ const City = {
           }
           if (!hasWalk) continue;
           curbProp('sign_parking', ...curb(side, 3, 5), 2);
-          curbProp('sign_noparking', ...curb(side, 17, 5), 2);
-          curbProp('ticket_machine', ...curb(side, 12, 22), 3);
-          lamp(...curb(side, 2, 5)); lamp(...curb(side, 18, 5));
+          curbProp('sign_noparking', ...curb(side, 16, 5), 2);
+          // ticket machines and bins stand at the back of the sidewalk: the middle is the walk line
+          curbProp('ticket_machine', ...curb(side, 12, 40), 3);
+          lamp(...curb(side, 2, 5)); lamp(...curb(side, 17, 5));        // a tile clear of each zebra's walk line
           if (R() < 0.4) curbProp('hydrant', ...curb(side, 8, 6), 3);
-          if (R() < 0.35) curbProp('bin', ...curb(side, 4, 24), 4);
+          if (R() < 0.35) curbProp('bin', ...curb(side, 4, 40), 4);
         }
       } else if (p === 'street' && grid) {
         for (const side of [-1, 1]) {
@@ -1785,7 +1869,7 @@ const City = {
     // hydrants and bins on downtown/suburb block corners, crate spots on single blocks
     for (const b of c.blocks) {
       if (b.kind === 'downtown' || b.kind === 'suburb') {
-        if (R() < 0.4) { const x = T(b.x0 + 3), y = T(b.y1) - 10; if (kAtPx(x, y) === KIND.WALK) addProp('hydrant', x, y, 3); }
+        if (R() < 0.4) { const x = T(b.x0 + 3), y = T(b.y1) - (b.ring >= 3 ? 10 : 5); if (kAtPx(x, y) === KIND.WALK) addProp('hydrant', x, y, 3); }
       }
       if (b.bx0 === b.bx1 && b.by0 === b.by1 && b.kind !== 'rural' && R() < 0.5) c.crateSpots.push({ x: T(b.x1) - 20, y: T(b.y0 + 12) });
       if (b.kind === 'rural' && R() < 0.4) c.crateSpots.push({ x: T(b.x0 + 2), y: T(b.y0 + 2) });
@@ -1822,7 +1906,7 @@ const City = {
     for (const g of [G.major, G.side, G.main, G.iron]) {
       const cand = shuffle(g.blocks.filter((b) => b.bx0 === b.bx1 && b.by0 === b.by1 && (b.kind === 'downtown' || g === G.iron) && !b.spawnPark && b.type !== 'garagelot'));
       for (const b of cand) {
-        const p = { x: T(b.x0 + 10), y: T(b.y1 - b.ring) + 8 };
+        const p = { x: T(b.x0 + 10), y: T(b.y1 - b.ring) + 4 };       // the inner edge of the sidewalk, off the walk line
         if (kAtPx(p.x, p.y) !== KIND.WALK || dist(p.x, p.y, c.spawn.x, c.spawn.y) < 120) continue;
         phone(p.x, p.y, g.name);
         break;
@@ -1890,6 +1974,114 @@ const City = {
       }
       c.parked = kept.concat(c.parked.filter((s) => s.models && s.models[0] === 'helicopter'));
     }
+    // ============================================================ PAINT SHOPS ==
+    // Four paint & body garages (spec paintshop-v1 S1), placed last and without RNG so nothing
+    // else moves: a 6x5 garage flush against a block's inner edge with its door facing the street,
+    // and a 4-deep concrete apron between the door and the sidewalk. The bay (3x4 tiles, centred
+    // on the door) is where a car parks nose-in. Only LOT/CONCRETE/PLAZA/LAWN tiles are
+    // converted (resolveFrames draws no RNG for those, so tile variants elsewhere stay put).
+    {
+      const OPEN = new Set([KIND.LOT, KIND.CONCRETE, KIND.PLAZA, KIND.LAWN]);
+      const FACE = { n: 0, e: Math.PI / 2, s: Math.PI, w: -Math.PI / 2 };
+      const OUT = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0] };
+      const inPx = (o, r, m = 0) => o.x >= r.x0 - m && o.x < r.x1 + m && o.y >= r.y0 - m && o.y < r.y1 + m;
+      const crosses = (l, r) => Math.max(l.x0, l.x1) >= r.x0 && Math.min(l.x0, l.x1) <= r.x1 && Math.max(l.y0, l.y1) >= r.y0 && Math.min(l.y0, l.y1) <= r.y1;
+      const solidProps = () => [c.trees, c.lamps, c.props, c.talls, c.trafficLights, c.sprites, c.phones];
+      // the site (tiles) for side `side` at offset `o` along the block's inner edge
+      const site = (b, side, o) => {
+        const A = b.A, D = 9, Wd = 6;
+        const r = side === 'n' ? { x: A.x + o, y: A.y, w: Wd, h: D } : side === 's' ? { x: A.x + o, y: A.y + A.h - D, w: Wd, h: D }
+          : side === 'w' ? { x: A.x, y: A.y + o, w: D, h: Wd } : { x: A.x + A.w - D, y: A.y + o, w: D, h: Wd };
+        const bayT = side === 'n' ? { x: r.x, y: r.y, w: 6, h: 4 } : side === 's' ? { x: r.x, y: r.y + 5, w: 6, h: 4 }
+          : side === 'w' ? { x: r.x, y: r.y, w: 4, h: 6 } : { x: r.x + 5, y: r.y, w: 4, h: 6 };
+        const bld = side === 'n' ? { x: r.x, y: r.y + 4, w: 6, h: 5 } : side === 's' ? { x: r.x, y: r.y, w: 6, h: 5 }
+          : side === 'w' ? { x: r.x + 4, y: r.y, w: 5, h: 6 } : { x: r.x, y: r.y, w: 5, h: 6 };
+        for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) if (!OPEN.has(kindAt(x, y))) return null;
+        // the driveway: from the apron's outer edge across the ring (and verge) to the asphalt
+        const [dx, dy] = OUT[side];
+        const v = dx === 0;
+        const lo = v ? bayT.x + 1 : bayT.y + 1, hi = lo + 4;           // 4 tiles wide, the bay's width + a margin
+        let t = v ? (dy < 0 ? bayT.y - 1 : bayT.y + bayT.h) : (dx < 0 ? bayT.x - 1 : bayT.x + bayT.w), n = 0;
+        for (; n < 8; n++, t += v ? dy : dx) {
+          let road = true;
+          for (let u = lo; u < hi; u++) {
+            const k = v ? kindAt(u, t) : kindAt(t, u);
+            if (k === KIND.BUILDING || k === KIND.WATER || k === KIND.RAIL) return null;
+            if (k !== KIND.ROAD) road = false;
+          }
+          if (road) break;
+        }
+        if (n === 8 || n === 0) return null;
+        const tEnd = t - (v ? dy : dx);                                  // the last off-road tile
+        const t0 = v ? (dy < 0 ? bayT.y : bayT.y + bayT.h - 1) : (dx < 0 ? bayT.x : bayT.x + bayT.w - 1);
+        const a = Math.min(t0, tEnd), z = Math.max(t0, tEnd) + 1;
+        const drive = v ? { x0: T(lo), y0: T(a), x1: T(hi), y1: T(z) } : { x0: T(a), y0: T(lo), x1: T(z), y1: T(hi) };
+        const rect = { x0: T(r.x), y0: T(r.y), x1: T(r.x + r.w), y1: T(r.y + r.h) };
+        if (solidProps().some((list) => list.some((p) => inPx(p, rect, 8)))) return null;
+        if (c.walkLines.some((l) => crosses(l, rect))) return null;
+        if (c.pens.some((p) => crosses(p, rect))) return null;
+        if (c.trafficLights.some((p) => inPx(p, drive, 12)) || c.phones.some((p) => inPx(p, drive, 12))) return null;
+        return { r, bayT, bld, drive, side };
+      };
+      const pickSite = (blocks, sides) => {
+        for (const b of blocks) for (const side of sides) {
+          const along = side === 'n' || side === 's' ? b.A.w : b.A.h;
+          for (let o = along - 7; o >= 1; o--) { const s = site(b, side, o); if (s) return Object.assign(s, { b }); }
+        }
+        return null;
+      };
+      const nearCentre = (g) => (p, q) => dist((p.x0 + p.x1) / 2, (p.y0 + p.y1) / 2, g.ox + g.w / 2, g.oy + g.h / 2) - dist((q.x0 + q.x1) / 2, (q.y0 + q.y1) / 2, g.ox + g.w / 2, g.oy + g.h / 2);
+      const single = (b) => b.bx0 === b.bx1 && b.by0 === b.by1;
+      const plans = [
+        [G.major, (b) => b.type === 'shops' && single(b) && b.gunshop === undefined, ['s', 'e', 'w']],
+        [G.side, (b) => b.type === 'shops' && single(b) && b.gunshop === undefined, ['s', 'e', 'w']],
+        [G.main, (b) => b.type === 'shops' && single(b) && b.gunshop === undefined, ['s', 'e', 'w']],
+        [G.iron, (b) => (b.type === 'warehouse' || b.type === 'factory') && b.gunshop === undefined, ['s', 'w', 'e', 'n']],
+      ];
+      const tags = (Assets.sheets.walls || {}).tags || {}, rtags = (Assets.sheets.roofs || {}).tags || {};
+      plans.forEach(([g, want, sides], id) => {
+        const s = pickSite(g.blocks.filter(want).sort(nearCentre(g)), sides);
+        if (!s) throw new Error('no paint shop site in ' + g.name);
+        const { bayT, bld, drive, side, b } = s;
+        // ground: the garage and a concrete apron in front of it
+        for (let y = s.r.y; y < s.r.y + s.r.h; y++) for (let x = s.r.x; x < s.r.x + s.r.w; x++) setKind(x, y, KIND.CONCRETE, 0);
+        for (let y = bld.y; y < bld.y + bld.h; y++) for (let x = bld.x; x < bld.x + bld.w; x++) { c.kind[I(x, y)] = KIND.BUILDING; c.solid[I(x, y)] = 1; }
+        const bl = { tx: bld.x, ty: bld.y, tw: bld.w, th: bld.h, x: T(bld.x), y: T(bld.y), w: T(bld.w), h: T(bld.h),
+          floors: 1, height: 32, wall: tags.wall_paintshop ? 'paintshop' : 'shedr', roof: flat(rtags.roof_paintshop ? 'paintshop' : 'teal'),
+          lit: b.rg.lit, seed: 7919 * (id + 1), sign: 'PAINT', paintshop: id };
+        c.buildings.push(bl);
+        // the bay: 3 tiles across the door, the apron's 4 tiles deep (px)
+        const v = side === 'n' || side === 's';
+        const bay = v ? { x0: T(bayT.x + 1.5), y0: T(bayT.y), x1: T(bayT.x + 4.5), y1: T(bayT.y + 4) }
+          : { x0: T(bayT.x), y0: T(bayT.y + 1.5), x1: T(bayT.x + 4), y1: T(bayT.y + 4.5) };
+        const x = (bay.x0 + bay.x1) / 2, y = (bay.y0 + bay.y1) / 2;
+        const ang = FACE[side] + Math.PI > Math.PI ? FACE[side] - Math.PI : FACE[side] + Math.PI;   // nose to the door
+        const info = PAINT_SHOPS[id];
+        c.paintshops.push({ id, name: info.name, area: info.area, district: this.placeAt(x, y).district, x, y, ang, bay, drive, b: bl });
+        // keep the apron and the driveway clear: props, trees, lamps, parked cars and spots
+        const zone = { x0: Math.min(T(s.r.x), drive.x0), y0: Math.min(T(s.r.y), drive.y0), x1: Math.max(T(s.r.x + s.r.w), drive.x1), y1: Math.max(T(s.r.y + s.r.h), drive.y1) };
+        const [ox, oy] = OUT[side];
+        const road = { x0: drive.x0 + Math.min(0, ox) * 48, y0: drive.y0 + Math.min(0, oy) * 48, x1: drive.x1 + Math.max(0, ox) * 48, y1: drive.y1 + Math.max(0, oy) * 48 };
+        const clear = (o) => !inPx(o, zone, 6) && !inPx(o, road, 6);
+        const gone = new Set(c.obstacles.filter((o) => !clear(o)));
+        c.trees = c.trees.filter(clear); c.lamps = c.lamps.filter(clear); c.props = c.props.filter(clear);
+        c.obstacles = c.obstacles.filter((o) => !gone.has(o));
+        for (const k of ['parked', 'stalls', 'parkSpots', 'roadSpots', 'crateSpots']) c[k] = c[k].filter(clear);
+        // a gate in any fence across the driveway
+        const gate = { x0: drive.x0 - 4, y0: drive.y0 - 4, x1: drive.x1 + 4, y1: drive.y1 + 4 };
+        c.paints = c.paints.flatMap((f) => {
+          if (f.t !== 'fence' || !crosses(f, gate)) return [f];
+          if (f.y0 === f.y1 && v) return [Object.assign({}, f, { x0: Math.min(f.x0, f.x1), x1: gate.x0 }), Object.assign({}, f, { x0: gate.x1, x1: Math.max(f.x0, f.x1) })].filter((q) => q.x1 - q.x0 > 4);
+          if (f.x0 === f.x1 && !v) return [Object.assign({}, f, { y0: Math.min(f.y0, f.y1), y1: gate.y0 }), Object.assign({}, f, { y0: gate.y1, y1: Math.max(f.y0, f.y1) })].filter((q) => q.y1 - q.y0 > 4);
+          return [f];
+        });
+        const out = { x: Math.round(x + ox * 40), y: Math.round(y + oy * 40) };      // just outside the bay, on the apron's edge
+        const title = info.name.toLowerCase().replace(/\b[a-z]/g, (m) => m.toUpperCase());
+        landmark(title, out.x, out.y, { kind: 'paintshop', rect: { x: bl.tx, y: bl.ty, w: bl.tw, h: bl.th },
+          what: `paint shop ${id} (${info.area}): ${bl.tw}x${bl.th} garage, PAINT sign; bay x ${bay.x0}-${bay.x1}, y ${bay.y0}-${bay.y1} px, door facing ${{ n: 'north', e: 'east', s: 'south', w: 'west' }[side]}` });
+        for (const k of [title, 'PAINT SHOP: ' + info.area, 'Paint Shop ' + (id + 1)]) c.places[k] = out;
+      });
+    }
     // extra camera spots for screenshots
     c.places['Bridge Tower'] = { x: T(TOWERS[0]) + 8, y: T(BRIDGE_Y + ROAD) + 40 };
     c.places['Gate Bridge South'] = { x: T(TOWERS[0] + 14), y: T(BRIDGE_Y + 17) };
@@ -1903,6 +2095,10 @@ const City = {
     mark('frames');
     this.buildLanes(c);
     mark('lanes');
+    this.buildWalks(c);
+    mark('walks');
+    this.buildRoutes(c);
+    mark('routes');
     return c;
   },
 
@@ -2198,6 +2394,433 @@ const City = {
         ctx.fillStyle = nd.kind === 'turn' ? '#ff5aff' : nd.signal ? '#3bff6a' : '#ffffff';
         ctx.fillRect(nd.x - 5 * px, nd.y - 5 * px, 10 * px, 10 * px);
       }
+    }
+    ctx.restore();
+  },
+
+  // ================================================================ WALKS ==
+  // Pedestrian walk graph (spec docs/specs/peds-v1.md §4). Built last, with no RNG.
+  //   c.walks: { id, x0, y0, x1, y1, len, zone, from, to, xing? }  axis-aligned segments in px,
+  //            x0 <= x1 and y0 <= y1; from/to = walk node ids at (x0, y0) / (x1, y1).
+  //            xing = { node, axis } on the road part of a crossing: `axis` is the axis of the
+  //            road being crossed (a horizontal crossing crosses a 'v' road); `node` is the lane
+  //            node (c.nodes) whose Render.signalFrame(axis) runs that road: cross while it is
+  //            red (0). node null = unsignalised: look for cars. Crossing edges end at the kerb.
+  //   c.walkNodes: { id, x, y, edges: [walk ids] }
+  // Sources: the centre line of every block's sidewalk ring; zebra crossings at both ends of
+  // avenue grid runs (their junction's lights), one unsignalised corner crossing per street
+  // and rough grid run; court mouths; the plaza walks, the boardwalk, the terminal kerb, farm
+  // tracks and farm-town paths (c.walkLines). Lines are split where they meet (T-junctions),
+  // cut where they would cross water, buildings, bridges, highways or level crossings, and
+  // their road stretches become crossings; crossings left hanging are dropped.
+  buildWalks(c) {
+    const n = this.net, W = n.W, H = n.H, ROAD = CITY.ROAD;
+    const T = (t) => t * TILE;
+    const lines = [];
+    const add = (x0, y0, x1, y1, extra) => {
+      if (x0 !== x1 && y0 !== y1) return;
+      if (x0 > x1) [x0, x1] = [x1, x0];
+      if (y0 > y1) [y0, y1] = [y1, y0];
+      if (x1 - x0 + y1 - y0 < 1) return;
+      lines.push(Object.assign({ x0, y0, x1, y1, cross: false, conn: false, sig: null }, extra));
+    };
+    // ---- sidewalk rings
+    for (const b of c.blocks) {
+      if (!b.ring) continue;
+      const h = b.ring * 8, X0 = T(b.x0) + h, X1 = T(b.x1) - h, Y0 = T(b.y0) + h, Y1 = T(b.y1) - h;
+      add(X0, Y0, X1, Y0); add(X0, Y1, X1, Y1); add(X0, Y0, X0, Y1); add(X1, Y0, X1, Y1);
+    }
+    // ---- crossings over grid runs (block ring to block ring)
+    const nodeAtBox = new Map();
+    for (const nd of c.nodes || []) if (nd.box) nodeAtBox.set(nd.box.x + ',' + nd.box.y, nd);
+    for (const r of n.recs) {
+      if (!r.grid || r.axis === 'x' || r.len !== r.grid.lot) continue;
+      if (r.profile !== 'avenue' && r.profile !== 'street' && r.profile !== 'rough') continue;
+      const g = r.grid, vert = r.axis === 'v';
+      const own = (bx, by) => (bx < 0 || by < 0 || bx >= g.nx || by >= g.ny ? -1 : g.owner[by * g.nx + bx]);
+      const ia = vert ? own(r.gi - 1, r.gj) : own(r.gi, r.gj - 1), ib = own(r.gi, r.gj);
+      if (ia < 0 || ib < 0) continue;
+      const A = g.blocks[ia], B = g.blocks[ib];
+      if (!A.ring || !B.ring) continue;
+      const d = Math.max(A.ring, B.ring) * 8;        // on the zebra (avenue: 24 px into its 32)
+      const nd0 = nodeAtBox.get(vert ? r.x + ',' + (r.y - ROAD) : (r.x - ROAD) + ',' + r.y);
+      const nd1 = nodeAtBox.get(vert ? r.x + ',' + (r.y + r.len) : (r.x + r.len) + ',' + r.y);
+      let ends;
+      if (r.profile === 'avenue') ends = [0, 1];
+      else {
+        // one corner per street: the busier junction's end
+        const a0 = nd0 ? nd0.arms : 0, a1 = nd1 ? nd1.arms : 0;
+        ends = [a0 > a1 ? 0 : a1 > a0 ? 1 : (r.gi + r.gj) & 1];
+      }
+      const p0 = T(vert ? r.x : r.y) - A.ring * 8, p1 = T((vert ? r.x : r.y) + ROAD) + B.ring * 8;
+      for (const e of ends) {
+        const at = e === 0 ? T(vert ? r.y : r.x) + d : T(vert ? r.y + r.len : r.x + r.len) - d;
+        const nd = e === 0 ? nd0 : nd1;
+        const sig = r.profile === 'avenue' && nd && nd.signal ? nd.id : null;
+        if (vert) add(p0, at, p1, at, { cross: true, sig }); else add(at, p0, at, p1, { cross: true, sig });
+      }
+    }
+    for (const l of c.walkLines || []) add(l.x0, l.y0, l.x1, l.y1, { conn: !!l.conn });
+    delete c.walkLines;
+
+    // ---- split lines at the endpoints of other lines that land on them (T-junctions)
+    const byX = new Map(), byY = new Map();
+    const pt = (m, k, v) => { let a = m.get(k); if (!a) m.set(k, (a = [])); a.push(v); };
+    for (const l of lines) for (const [x, y] of [[l.x0, l.y0], [l.x1, l.y1]]) { pt(byX, x, y); pt(byY, y, x); }
+    const pieces = [];
+    for (const l of lines) {
+      const vert = l.x0 === l.x1;
+      const a0 = vert ? l.y0 : l.x0, a1 = vert ? l.y1 : l.x1;
+      const cuts = [...new Set((vert ? byX.get(l.x0) : byY.get(l.y0)) || [])].filter((a) => a > a0 && a < a1).sort((p, q) => p - q);
+      let s = a0;
+      for (const a of cuts.concat([a1])) {
+        pieces.push(Object.assign({}, l, vert ? { y0: s, y1: a } : { x0: s, x1: a }));
+        s = a;
+      }
+    }
+
+    // ---- cut at bad ground; road stretches become crossings
+    const OK = 0, RD = 1, BAD = 2;
+    const cls = (tx, ty) => {
+      if (tx < 0 || ty < 0 || tx >= W || ty >= H) return BAD;
+      const i = ty * W + tx, k = c.kind[i];
+      if (k === KIND.WATER || k === KIND.BUILDING || k === KIND.BRIDGE || c.solid[i]) return BAD;
+      if (k !== KIND.ROAD && k !== KIND.DIRT && k !== KIND.VERGE && k !== KIND.MEADOW) return OK;
+      const r = this.roadAt(tx, ty);
+      if (r && (r.profile === 'highway' || r.xing)) return BAD;
+      if (k === KIND.ROAD) return RD;                  // grid roads, court stems and bulbs
+      return r && k === KIND.DIRT ? RD : OK;           // dirt road (farm tracks are DIRT off the network)
+    };
+    const edges = [];
+    for (const l of pieces) {
+      const vert = l.x0 === l.x1, cA = vert ? l.x0 : l.y0;
+      const a0 = vert ? l.y0 : l.x0, a1 = vert ? l.y1 : l.x1;
+      const la = Math.floor((cA - 4) / TILE), lb = Math.floor((cA + 4) / TILE);
+      const runs = [];
+      for (let t = Math.floor(a0 / TILE); T(t) < a1; t++) {
+        let k = OK;
+        for (let q = la; q <= lb; q++) k = Math.max(k, vert ? cls(q, t) : cls(t, q));
+        const s = Math.max(a0, T(t)), e = Math.min(a1, T(t + 1));
+        const last = runs[runs.length - 1];
+        if (last && last.k === k) last.e = e; else runs.push({ k, s, e });
+      }
+      if (l.cross && runs.some((u) => u.k === BAD)) continue;       // a crossing goes all the way or not at all
+      for (const u of runs) {
+        if (u.k === BAD || u.e - u.s < 2) continue;
+        const ed = { x0: vert ? cA : u.s, y0: vert ? u.s : cA, x1: vert ? cA : u.e, y1: vert ? u.e : cA, conn: l.cross || l.conn, xing: null };
+        if (u.k === RD) ed.xing = { node: l.cross ? l.sig : null, axis: vert ? 'h' : 'v' };
+        edges.push(ed);
+      }
+    }
+
+    // ---- nodes; drop crossings and connectors left hanging, then tiny islands
+    const nodes = new Map();
+    const key = (x, y) => Math.round(x * 2) + ',' + Math.round(y * 2);
+    const nodeAt = (x, y) => { const k = key(x, y); let nd = nodes.get(k); if (!nd) nodes.set(k, (nd = { x, y, e: new Set() })); return nd; };
+    for (const ed of edges) { ed.a = nodeAt(ed.x0, ed.y0); ed.b = nodeAt(ed.x1, ed.y1); ed.a.e.add(ed); ed.b.e.add(ed); }
+    const drop = (ed) => { ed.gone = true; ed.a.e.delete(ed); ed.b.e.delete(ed); };
+    for (let again = true; again;) {
+      again = false;
+      for (const ed of edges) if (!ed.gone && (ed.xing || ed.conn) && (ed.a.e.size < 2 || ed.b.e.size < 2)) { drop(ed); again = true; }
+    }
+    {
+      const seen = new Set();
+      for (const ed of edges) {
+        if (ed.gone || seen.has(ed)) continue;
+        const comp = [], stack = [ed];
+        seen.add(ed);
+        while (stack.length) {
+          const e = stack.pop();
+          comp.push(e);
+          for (const nd of [e.a, e.b]) for (const f of nd.e) if (!seen.has(f)) { seen.add(f); stack.push(f); }
+        }
+        if (comp.reduce((s, e) => s + e.x1 - e.x0 + e.y1 - e.y0, 0) < 64) for (const e of comp) drop(e);
+      }
+    }
+    // ---- merge straight runs through plain 2-edge nodes (T-junction cuts left unused)
+    for (const nd of nodes.values()) {
+      if (nd.e.size !== 2) continue;
+      const [p, q] = [...nd.e];
+      if (p.xing || q.xing) continue;
+      const pv = p.x0 === p.x1, qv = q.x0 === q.x1;
+      if (pv !== qv) continue;
+      const lo = pv ? (p.y0 < q.y0 ? p : q) : (p.x0 < q.x0 ? p : q), hi = lo === p ? q : p;
+      const m = { x0: lo.x0, y0: lo.y0, x1: hi.x1, y1: hi.y1, a: lo.a, b: hi.b, conn: false, xing: null };
+      drop(p); drop(q);
+      m.a.e.add(m); m.b.e.add(m);
+      edges.push(m);
+    }
+    // ---- output
+    const walks = [], walkNodes = [];
+    const r1 = (v) => Math.round(v * 10) / 10;
+    for (const nd of nodes.values()) {
+      if (!nd.e.size) continue;
+      nd.id = walkNodes.length;
+      walkNodes.push({ id: nd.id, x: r1(nd.x), y: r1(nd.y), edges: [] });
+    }
+    for (const ed of edges) {
+      if (ed.gone) continue;
+      const w = { id: walks.length, x0: r1(ed.x0), y0: r1(ed.y0), x1: r1(ed.x1), y1: r1(ed.y1), len: r1(ed.x1 - ed.x0 + ed.y1 - ed.y0),
+        zone: this.regionAt((ed.x0 + ed.x1) / 2, (ed.y0 + ed.y1) / 2).zone, from: ed.a.id, to: ed.b.id };
+      if (ed.xing) w.xing = ed.xing;
+      walks.push(w);
+      walkNodes[w.from].edges.push(w.id);
+      walkNodes[w.to].edges.push(w.id);
+    }
+    c.walks = walks;
+    c.walkNodes = walkNodes;
+
+    // ---- spatial index: 128-px cells, each lists the walks within 16 px of it
+    const CS = 128, gx = Math.ceil((W * TILE) / CS), gy = Math.ceil((H * TILE) / CS), m = 16;
+    const cells = new Array(gx * gy);
+    for (const w of walks) {
+      const cx0 = clamp(Math.floor((w.x0 - m) / CS), 0, gx - 1), cx1 = clamp(Math.floor((w.x1 + m) / CS), 0, gx - 1);
+      const cy0 = clamp(Math.floor((w.y0 - m) / CS), 0, gy - 1), cy1 = clamp(Math.floor((w.y1 + m) / CS), 0, gy - 1);
+      for (let y = cy0; y <= cy1; y++) for (let x = cx0; x <= cx1; x++) (cells[y * gx + x] || (cells[y * gx + x] = [])).push(w);
+    }
+    this.walkIndex = { CS, gx, gy, cells, seen: new Uint32Array(walks.length), tick: 0, walks, nodes: walkNodes, pens: c.pens, tmp: [] };
+  },
+
+  // ================================================================ ROUTES ==
+  // Moving-parts data for the Flights and Cranes systems (spec docs/specs/ambient-v1.md), all px,
+  // no RNG. Angles: 0 = north (up), clockwise, like every sprite.
+  //   c.airport = { runway: { x0, y0, x1, y1, cx, heading }, approach: { from, touchdown, rollEnd },
+  //     depart: { lineup, rotate, climb }, stands: [{ id, kind, x, y, ang, tag, sprite, obstacles }],
+  //     taxi: { in: { id: path }, out: { id: path }, push: { id: path } } }
+  //   Arrivals fly north up the centre line (from -> touchdown -> rollEnd), then taxi.in[id] from
+  //   rollEnd to the stand (nose in). Departures: taxi.push[id] (reversing; [] = none), then
+  //   taxi.out[id] from the push end to depart.lineup at the runway's south end, then the roll north
+  //   (rotate, climb). Paths are points <= 32 px apart with fillets of radius 96 (props 60) at every
+  //   corner. The 'runway' stand (the airliner lined up at start) has no taxi.in: it leaves first.
+  //   c.port = { rail: { y, x0, x1 }, cranes: [{ id, x, y, bays, bayMin, bayMax, sprite, legs }],
+  //     ship: { x, y, ang, slots: [{ x, y, ang, bay, row }] }, quaySlots: [{ x, y, ang }] }
+  // Plane and crane sprites stay in c.sprites with `dyn` set (drawn statically until the new
+  // systems filter them out); their obstacles carry `plane: standId` / `crane: craneId`.
+  buildRoutes(c) {
+    const T = (t) => t * TILE, r1 = (v) => Math.round(v * 10) / 10;
+    const path = (pts, R) => {
+      const out = [];
+      const push = (x, y) => { const l = out[out.length - 1]; if (!l || Math.hypot(x - l[0], y - l[1]) > 1) out.push([r1(x), r1(y)]); };
+      const line = (ax, ay, bx, by) => { const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / 32)); for (let k = 1; k <= n; k++) push(ax + ((bx - ax) * k) / n, ay + ((by - ay) * k) / n); };
+      push(pts[0][0], pts[0][1]);
+      let cur = pts[0];
+      for (let i = 1; i < pts.length; i++) {
+        const A = pts[i - 1], P = pts[i], N = pts[i + 1];
+        if (!N) { line(cur[0], cur[1], P[0], P[1]); break; }
+        const lin = Math.hypot(P[0] - A[0], P[1] - A[1]), lout = Math.hypot(N[0] - P[0], N[1] - P[1]);
+        const din = [(P[0] - A[0]) / lin, (P[1] - A[1]) / lin], dout = [(N[0] - P[0]) / lout, (N[1] - P[1]) / lout];
+        const r = Math.min(R, i === 1 ? lin : lin / 2, i + 1 === pts.length - 1 ? lout : lout / 2);
+        const a = [P[0] - din[0] * r, P[1] - din[1] * r], b = [P[0] + dout[0] * r, P[1] + dout[1] * r];
+        line(cur[0], cur[1], a[0], a[1]);
+        const cx = a[0] + dout[0] * r, cy = a[1] + dout[1] * r;           // quarter-circle fillet
+        const t0 = Math.atan2(a[1] - cy, a[0] - cx);
+        let dt = Math.atan2(b[1] - cy, b[0] - cx) - t0;
+        while (dt > Math.PI) dt -= 2 * Math.PI; while (dt < -Math.PI) dt += 2 * Math.PI;
+        const n = Math.max(3, Math.ceil((Math.abs(dt) * r) / 16));
+        for (let k = 1; k <= n; k++) push(cx + Math.cos(t0 + (dt * k) / n) * r, cy + Math.sin(t0 + (dt * k) / n) * r);
+        cur = b;
+      }
+      return out;
+    };
+    // ---- airport
+    const air = c._air;
+    if (air && c._planes) {
+      const RW = air.RW, CX = T(RW.x) + T(RW.w) / 2;
+      const TWX = T(air.TW.x + air.TW.w / 2), TLX = T(air.AP.x + 5.5);         // taxiway / apron taxilane centre lines
+      const LM = T(air.links[1] + 5.5), LS = T(air.links[2] + 5.5);           // mid and south exit links
+      const ROLL = LM + 106, LINEUP = T(RW.y + RW.h) - 548, R = 96, RP = 60;
+      const runway = { x0: T(RW.x), y0: T(RW.y), x1: T(RW.x + RW.w), y1: T(RW.y + RW.h), cx: CX, heading: 0 };
+      const approach = { from: [CX, T(RW.y + RW.h) + 1150], touchdown: [CX, T(RW.y + RW.h) - 248], rollEnd: [CX, ROLL] };
+      const depart = { lineup: [CX, LINEUP], rotate: [CX, T(RW.y + RW.h) - 1948], climb: [CX, T(RW.y) - 800] };
+      const toRunway = [[TWX, LS], [CX, LS], [CX, LINEUP]];
+      const stands = [], tin = {}, tout = {}, tpush = {};
+      const kinds = ['gate', 'gate', 'gate', 'remote', 'prop', 'prop', 'runway'];
+      c._planes.forEach((pl, id) => {
+        const kind = kinds[id] || 'remote';
+        const obstacles = pl.obstacles.filter((o) => c.obstacles.includes(o));
+        for (const o of obstacles) o.plane = id;
+        stands.push({ id, kind, x: pl.x, y: pl.y, ang: pl.ang, tag: pl.tag, sprite: pl.sprite, obstacles });
+        pl.sprite.stand = id;
+        const { x, y } = pl;
+        const head = [[CX, ROLL], [CX, LM], [TWX, LM]];
+        if (kind === 'gate') {
+          tin[id] = path(head.concat([[TWX, y - 220], [TLX, y - 220], [TLX, y], [x, y]]), R);
+          tpush[id] = path([[x, y], [TLX, y], [TLX, y - 110]], R);
+          tout[id] = path([[TLX, y - 110], [TLX, 10240], [TWX, 10240]].concat(toRunway), R);
+        } else if (kind === 'remote') {
+          tin[id] = path(head.concat([[TWX, y + 220], [x, y + 220], [x, y]]), R);
+          tpush[id] = path([[x, y], [x, y + 96], [x + 96, y + 96]], R);
+          tout[id] = path([[x + 96, y + 96], [TWX, y + 96]].concat(toRunway), R);
+        } else if (kind === 'prop' && Math.abs(pl.ang + Math.PI / 2) < 0.1) {          // parked nose west
+          tin[id] = path(head.concat([[TWX, y - 134], [x + 124, y - 134], [x + 124, y], [x, y]]), RP);
+          tpush[id] = [];
+          tout[id] = path([[x, y], [x - 96, y], [x - 96, y - 134], [TWX, y - 134]].concat(toRunway), RP);
+        } else if (kind === 'prop') {                                                    // parked nose north
+          tin[id] = path(head.concat([[TWX, y + 104], [x, y + 104], [x, y]]), RP);
+          tpush[id] = [];
+          tout[id] = path([[x, y], [x, y - 166], [TWX, y - 166]].concat(toRunway), RP);
+        } else {
+          // the airliner lined up at the north end, nose south: backtrack down the runway, turn
+          // round in a 96-px teardrop at the south end and stop at the line-up point
+          tpush[id] = [];
+          const pts = [];
+          const add = (px, py) => pts.push([r1(px), r1(py)]);
+          for (let yy = y; yy < 10500; yy += 32) add(CX, yy);
+          const sBend = (x0, y0, x1, y1) => { for (let k = 0; k <= 12; k++) { const t = k / 12; add(x0 + ((x1 - x0) * (1 - Math.cos(Math.PI * t))) / 2, y0 + (y1 - y0) * t); } };
+          sBend(CX, 10500, CX - R, 10760);
+          for (let yy = 10792; yy < 11000; yy += 32) add(CX - R, yy);
+          add(CX - R, 11000);
+          for (let k = 1; k <= 12; k++) { const t = Math.PI - (Math.PI * k) / 12; add(CX + Math.cos(t) * R, 11000 + Math.sin(t) * R); }
+          for (let yy = 10968; yy > 10960; yy -= 32) add(CX + R, yy);
+          sBend(CX + R, 10960, CX, LINEUP);
+          tout[id] = pts.filter((p, k) => k === 0 || Math.hypot(p[0] - pts[k - 1][0], p[1] - pts[k - 1][1]) > 1);
+        }
+      });
+      c.airport = { runway, approach, depart, stands, taxi: { in: tin, out: tout, push: tpush } };
+    }
+    // ---- port: crane rails on the main quay, deck slots matching ships:container_ship's painted
+    // grid (8 bays at 80 px x 6 rows at 28 px, 72 x 27 containers, measured on the art rotated to
+    // bow east), quay slots on the apron under the booms, between the bollards
+    if (c._cranes && c._ship) {
+      const S = c._ship, slots = [];
+      const bayX = [], rowY = [];
+      for (let k = 0; k < 8; k++) bayX.push(r1(S.x + 206 - 488 + 80 * k));
+      for (let r = 0; r < 6; r++) rowY.push(r1(S.y + 25.5 - 96 + 28 * r));
+      bayX.forEach((x, bay) => rowY.forEach((y, row) => slots.push({ x, y, ang: S.ang, bay, row })));
+      const railY = c._cranes[0].legs[0].y;
+      const rail = { y: railY, x0: T(268), x1: T(332) };
+      const groups = [[0, 1, 2], [3, 4, 5], [6, 7]];
+      const cranes = c._cranes.map((k, id) => {
+        const legs = k.legs.filter((o) => c.obstacles.includes(o));
+        for (const o of legs) o.crane = id;
+        k.sprite.crane = id;
+        const bays = groups[id].map((b) => bayX[b]);
+        return { id, x: k.x, y: k.y, bays, bayMin: Math.min(k.x, bays[0]), bayMax: Math.max(k.x, bays[bays.length - 1]), sprite: k.sprite, legs };
+      });
+      const quaySlots = [];
+      for (let k = 0; k < 30; k++) {
+        const x = T(206 + 7 * k) + 8 + 56;                 // midway between two bollards
+        if (x - 36 >= rail.x0 && x + 36 <= rail.x1) quaySlots.push({ x, y: T(716) - 18, ang: Math.PI / 2 });
+      }
+      c.port = { rail, cranes, ship: { x: S.x, y: S.y, ang: S.ang, slots }, quaySlots };
+    }
+    delete c._planes; delete c._cranes; delete c._ship; delete c._air;
+  },
+
+  // Debug overlay (for #demo&routes), world coordinates: arrival (red), departure roll and climb
+  // (magenta), taxi in (cyan), taxi out (yellow), pushback (white), stands; crane rail (orange),
+  // crane bay ranges, ship deck slots (green) and quay slots (orange).
+  drawRoutes(ctx, px = 1) {
+    const c = G.city, A = c.airport, P = c.port;
+    ctx.save();
+    const poly = (pts, col, w = 2) => {
+      if (!pts || !pts.length) return;
+      ctx.strokeStyle = col; ctx.lineWidth = w * px;
+      ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+      for (const p of pts) ctx.lineTo(p[0], p[1]);
+      ctx.stroke();
+      ctx.fillStyle = col;
+      for (const p of pts) ctx.fillRect(p[0] - 1.5 * px, p[1] - 1.5 * px, 3 * px, 3 * px);
+    };
+    if (A) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 2 * px;
+      ctx.strokeRect(A.runway.x0, A.runway.y0, A.runway.x1 - A.runway.x0, A.runway.y1 - A.runway.y0);
+      poly([A.approach.from, A.approach.touchdown, A.approach.rollEnd], '#ff4a4a', 4);
+      poly([A.depart.lineup, A.depart.rotate, A.depart.climb], '#ff5aff', 2);
+      for (const s of A.stands) {
+        poly(A.taxi.in[s.id], '#5fe6ff'); poly(A.taxi.out[s.id], '#ffe45c'); poly(A.taxi.push[s.id], '#ffffff', 3);
+        ctx.fillStyle = s.kind === 'runway' ? '#ff5aff' : '#3bff6a';
+        ctx.fillRect(s.x - 6 * px, s.y - 6 * px, 12 * px, 12 * px);
+        ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 3 * px;
+        ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(s.x + Math.sin(s.ang) * 60, s.y - Math.cos(s.ang) * 60); ctx.stroke();
+      }
+      for (const [k, col] of [['touchdown', '#ff4a4a'], ['rollEnd', '#ff4a4a']]) { ctx.fillStyle = col; ctx.fillRect(A.approach[k][0] - 8, A.approach[k][1] - 8, 16, 16); }
+      for (const k of ['lineup', 'rotate', 'climb']) { ctx.fillStyle = '#ff5aff'; ctx.fillRect(A.depart[k][0] - 8, A.depart[k][1] - 8, 16, 16); }
+    }
+    if (P) {
+      ctx.strokeStyle = '#ff9d3b'; ctx.lineWidth = 3 * px;
+      ctx.beginPath(); ctx.moveTo(P.rail.x0, P.rail.y); ctx.lineTo(P.rail.x1, P.rail.y); ctx.stroke();
+      const box = (s, w, h, col) => {
+        const v = Math.abs(Math.sin(s.ang)) > 0.5, bw = v ? w : h, bh = v ? h : w;
+        ctx.strokeStyle = col; ctx.lineWidth = 1 * px; ctx.strokeRect(s.x - bw / 2, s.y - bh / 2, bw, bh);
+      };
+      for (const s of P.ship.slots) box(s, 72, 27, '#3bff6a');
+      for (const s of P.quaySlots) box(s, 72, 27, '#ff9d3b');
+      for (const k of P.cranes) {
+        ctx.strokeStyle = '#5fe6ff'; ctx.lineWidth = 2 * px;
+        ctx.strokeRect(k.bayMin, P.rail.y - 10, k.bayMax - k.bayMin, 20);
+        ctx.fillStyle = '#5fe6ff';
+        for (const b of k.bays) ctx.fillRect(b - 2, P.rail.y - 14, 4, 28);
+        ctx.fillStyle = '#ffffff';
+        for (const o of k.legs) ctx.fillRect(o.x - 4, o.y - 4, 8, 8);
+      }
+    }
+    ctx.restore();
+  },
+
+  // Every walk that passes within 16 px of the rect (px); `out` is reused if given.
+  walksIn(x0, y0, x1, y1, out = []) {
+    const X = this.walkIndex;
+    out.length = 0;
+    if (!X) return out;
+    if (++X.tick > 0xfffffff0) { X.seen.fill(0); X.tick = 1; }
+    const a = clamp(Math.floor(x0 / X.CS), 0, X.gx - 1), b = clamp(Math.floor(x1 / X.CS), 0, X.gx - 1);
+    const cy0 = clamp(Math.floor(y0 / X.CS), 0, X.gy - 1), cy1 = clamp(Math.floor(y1 / X.CS), 0, X.gy - 1);
+    for (let cy = cy0; cy <= cy1; cy++) for (let cx = a; cx <= b; cx++) {
+      const list = X.cells[cy * X.gx + cx];
+      if (list) for (const w of list) if (X.seen[w.id] !== X.tick) { X.seen[w.id] = X.tick; out.push(w); }
+    }
+    return out;
+  },
+
+  // The nearest walk within r px (default 24) of a world point: { walk, x, y, t, d } with
+  // (x, y) the projected point on it, t its distance from (walk.x0, walk.y0), d the distance
+  // to it; null if none.
+  walkAt(x, y, r = 24) {
+    const X = this.walkIndex;
+    if (!X) return null;
+    const list = this.walksIn(x - r, y - r, x + r, y + r, X.tmp);
+    let best = null, bd = r;
+    for (const w of list) {
+      const px = clamp(x, w.x0, w.x1), py = clamp(y, w.y0, w.y1);
+      const d = Math.hypot(x - px, y - py);
+      if (d <= bd) { bd = d; best = { walk: w, x: px, y: py, t: px - w.x0 + py - w.y0, d }; }
+    }
+    return best;
+  },
+
+  // Debug overlay (for #demo&walks), in WORLD coordinates like drawLanes: sidewalk walks
+  // (cyan), crossings (green = signalised, yellow = unsignalised, with the controlling
+  // junction marked), walk nodes (white; red = dead end) and cow pens (orange).
+  drawWalks(ctx, x0, y0, x1, y1, px = 1) {
+    const X = this.walkIndex;
+    if (!X) return;
+    ctx.save();
+    const list = this.walksIn(x0, y0, x1, y1);
+    const seen = new Set();
+    for (const w of list) {
+      ctx.strokeStyle = !w.xing ? '#5fe6ff' : w.xing.node !== null ? '#3bff6a' : '#ffe45c';
+      ctx.lineWidth = (w.xing ? 3 : 2) * px;
+      ctx.beginPath(); ctx.moveTo(w.x0, w.y0); ctx.lineTo(w.x1, w.y1); ctx.stroke();
+      if (w.xing && w.xing.node !== null && G.city && G.city.nodes) {
+        const nd = G.city.nodes[w.xing.node];
+        ctx.strokeStyle = 'rgba(59,255,106,0.45)'; ctx.lineWidth = 1 * px;
+        ctx.beginPath(); ctx.moveTo((w.x0 + w.x1) / 2, (w.y0 + w.y1) / 2); ctx.lineTo(nd.x, nd.y); ctx.stroke();
+      }
+      for (const id of [w.from, w.to]) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const nd = X.nodes[id];
+        ctx.fillStyle = nd.edges.length === 1 ? '#ff4040' : '#ffffff';
+        ctx.fillRect(nd.x - 2 * px, nd.y - 2 * px, 4 * px, 4 * px);
+      }
+    }
+    ctx.strokeStyle = '#ff9d3b'; ctx.lineWidth = 2 * px;
+    ctx.fillStyle = '#ff9d3b';
+    for (const p of X.pens) {
+      if (p.x1 < x0 || p.x0 > x1 || p.y1 < y0 || p.y0 > y1) continue;
+      ctx.strokeRect(p.x0, p.y0, p.x1 - p.x0, p.y1 - p.y0);
+      for (const s of p.spots) ctx.fillRect(s.x - 2 * px, s.y - 2 * px, 4 * px, 4 * px);
     }
     ctx.restore();
   },

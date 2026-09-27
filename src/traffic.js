@@ -13,12 +13,17 @@
 //   4. speed   the lowest of: cruise, turn speed, red/amber light, yield, left turn across
 //              oncoming traffic, train at a crossing, and the car / walker ahead on the route
 //   5. pedals  throttle/brake to hold that speed (feed-forward for rolling drag)
+// Peds and cows (peds-v1 P5): a living body inside the lane corridor (car half width + its radius
+// + TR.PED_PAD) is a standing obstacle: stop TR.PED_GAP px short. A ped waiting on the kerb is
+// outside the corridor. Never passed; honked at only when it stands in the road (pedStanding).
+// A fleeing driver ignores them.
 //
 // Driver state (c.driver; the pool creates { ai, lane, cruise }, the rest is added here):
 //   mode 'lane' | 'turn' | 'lost', lane (lane id), ex (exit at the end of `lane`, or being
 //   followed in 'turn'), nx (the exit after that), pi (path segment in 'turn'), want (target
 //   px/s), why (what limits it: 'cruise' 'turn' 'red' 'amber' 'clear' 'yield' 'left' 'train'
-//   'car' 'walker' 'pass' 'end' 'lost' 'reverse'), lead (the car ahead, 'walker', or null), gap (px to
+//   'car' 'walker' 'ped' 'pass' 'end' 'lost' 'reverse'), lead (the car ahead, 'walker', 'ped' with
+//   leadPed = the ped or cow, or null), gap (px to
 //   it), bias (px it edges right for oncoming traffic), id (per-driver, the older wins deadlocks).
 // Reactions (B4):
 //   blocked  `blockedT` = s stopped behind a car or the walker. When what's at the head of the
@@ -30,6 +35,11 @@
 //            fire; the player is the only shooter): `fleeT` = 10 s at the model's top speed,
 //            ignoring lights and yields but still following lanes, turning away from the player
 //            where it can; then it eases back down to cruise (`calmV`).
+//   gang     a crewed gang car (`c.gang`, not `crewOut`) skips all of the above towards the player:
+//            no flee, no honk or pass at them. Rammed/damaged by the player, stopped behind them
+//            GANG_CREW.BLOCK_T s, or a rival mob in sight (a member on foot or a crewed car within
+//            RIVAL_R px, clear line): `angry` + `foe`, it brakes and Game.gangBail empties it. A hit
+//            by anyone else is ignored (it drives on). Its route avoids other mobs' turf (pickExit).
 // `stuckT`/`revT` = the built-in unstick (reverse 0.9 s with opposite lock after 1.5 s wanting to
 // move but not moving).
 
@@ -72,11 +82,16 @@ const TR = {
   FLEE_ALAT: 200,
   FLEE_PASS_AFTER: 1.5,                    // s blocked before a fleeing car passes anything standing still                          // px/s^2 allowed in turns while fleeing
   CALM_DECEL: 70,                          // px/s^2: back down to cruise after fleeing
+  // pedestrians and cows (peds-v1 P5): brake for bodies actually in the lane corridor
+  PED_GAP: 8,                              // px bumper-to-body when stopped for a ped or cow
+  PED_PAD: 1,                              // px added to (car half width + body radius) for the corridor
+  PED_STILL: 1.5,                          // s a walking ped in front of us hasn't moved (it waits for us) ...
+  PED_BACK_T: 0.6,                         // ... then reverse this long (~10 px) to clear its path
 };
-const TR_WAITS = { red: 1, amber: 1, clear: 1, yield: 1, left: 1, train: 1, turn: 1, cruise: 1, pass: 1 };   // a lead waiting for these (or moving) is a legit wait
+const TR_WAITS = { red: 1, amber: 1, clear: 1, yield: 1, left: 1, train: 1, turn: 1, cruise: 1, pass: 1, ped: 1 };   // a lead waiting for these (or moving) is a legit wait
 
 const Traffic = {
-  _t: -1, grid: new Map(), nid: 0,
+  _t: -1, grid: new Map(), pgrid: new Map(), nid: 0,
   exitsFrom: null, incoming: null,
   // route scratch (reused; one car at a time)
   rx: new Float64Array(64), ry: new Float64Array(64), rs: new Float64Array(64), rn: 0,
@@ -114,6 +129,20 @@ const Traffic = {
     }
     const p = G.player;
     this.walker = p && !p.car && !p.dead ? p : null;
+    // living peds and cows (corpses are driven over), same cells
+    const pg = this.pgrid;
+    for (const b of pg.values()) b.length = 0;
+    if (G.peds) for (const o of G.peds) {
+      if (o.dead || o.gone) continue;
+      const k = Math.floor(o.x / C) * 8192 + Math.floor(o.y / C);
+      const b = pg.get(k);
+      if (b) b.push(o); else pg.set(k, [o]);
+    }
+  },
+  // a ped or cow standing in the road (not walking across it, waiting at a kerb or running):
+  // worth a honk
+  pedStanding(p) {
+    return p.kind === 'cow' || !(p.state === 'walk' || p.state === 'wait' || p.state === 'flee' || p.state === 'return' || p.state === 'burning');
   },
 
   // weighted random exit; long vehicles turn less (their swept path clips cars waiting at the
@@ -130,6 +159,10 @@ const Traffic = {
       if (nodes[M.to].kind === 'turn') v *= d && d.long ? 0 : TR.W_DEADEND;   // trucks can't turn in a 56-px loop
       if (d && d.long && ex.turn === 's') v *= TR.W_LONG_STRAIGHT;
       if (d && d.wide && (M.profile === 'street' || M.profile === 'court')) v *= TR.W_WIDE_NARROW;
+      if (d && d.gang) {   // a gang car keeps out of other mobs' turf unless there's no other way
+        if (M._turf === undefined) M._turf = typeof Gangs !== 'undefined' && Gangs.turfAt ? Gangs.turfAt((M.x0 + M.x1) / 2, (M.y0 + M.y1) / 2) : null;
+        if (M._turf && M._turf !== d.gang) v *= 0.001;
+      }
       if (d && d.fleeT > 0) {   // away from where the player hit us
         const nd = nodes[L.to], ax = nd.x - d.fleeX, ay = nd.y - d.fleeY, al = Math.hypot(ax, ay) || 1;
         v *= 0.15 + 2 * Math.max(0, (M.dx * ax + M.dy * ay) / al);
@@ -429,7 +462,8 @@ const Traffic = {
     d.lead = null; d.gap = Infinity;
     let pushR = 0, roomR = 99;   // keep right: squeeze from oncoming traffic, room on the right
     const P = d.passP;           // passing: our line is shifted P px left of the route
-    const test = (o, ox, oy, ofx, ofy, olen, ohw, ovx, ovy, pred) => {
+    // o: a car, or null for a body (who: 'walker' the player on foot, 'ped' a ped or cow, then d.leadPed)
+    const test = (o, ox, oy, ofx, ofy, olen, ohw, ovx, ovy, pred, who, body) => {
       // nearest route segment within S
       let dl = Infinity, sAt = 0, ux = 0, uy = 0, side = 0;
       for (let i = 1; i < n && rs[i - 1] < S; i++) {
@@ -450,7 +484,7 @@ const Traffic = {
         if (side > 0) roomR = Math.min(roomR, clear);
         else if (clear < 3 && (ofx * ux + ofy * uy) < -0.5) pushR = Math.max(pushR, 3 - clear);
       }
-      if (sAt <= 0 || dl >= c.hw + oLat - 1.5) return;   // it clears us (circles would at most brush)
+      if (sAt <= 0 || dl >= c.hw + oLat + (body ? TR.PED_PAD : -1.5)) return;   // it clears us (circles would at most brush)
       // its speed along our way: the lower of along the route there and along our heading now, so a
       // car we are about to merge in front of (it comes from the side) counts as standing still
       const vo = Math.min(ovx * ux + ovy * uy, ovx * c.fx + ovy * c.fy);
@@ -466,9 +500,9 @@ const Traffic = {
       const v0 = Math.max(0, vo);
       // behind something that isn't going anywhere (a parked or player car, the walker), stop
       // far enough back to pull out and pass it later (d.room)
-      const g0 = !o || (!(o.driver && o.driver.ai) && Math.abs(vo) < 3 && !pred) ? d.room : TR.GAP_MIN;
+      const g0 = body ? TR.PED_GAP : !o || (!(o.driver && o.driver.ai) && Math.abs(vo) < 3 && !pred) ? d.room : TR.GAP_MIN;
       const v = Math.sqrt(v0 * v0 + 2 * b * Math.max(0, gap - g0 - TR.HEADWAY * v0));
-      if (v < best) { best = v; d.lead = o || 'walker'; d.gap = gap; d.leadSide = side0; d.leadLat = oLat; d.leadAlong = oAlong; }
+      if (v < best) { best = v; d.lead = o || who || 'walker'; d.leadPed = body || null; d.gap = gap; d.leadSide = side0; d.leadLat = oLat; d.leadAlong = oAlong; }
     };
     for (let gx = Math.floor((x0 - m) / C); gx <= Math.floor((x1 + m) / C); gx++) {
       for (let gy = Math.floor((y0 - m) / C); gy <= Math.floor((y1 + m) / C); gy++) {
@@ -486,6 +520,20 @@ const Traffic = {
     }
     const w = this.walker;
     if (w && w.x > x0 - m && w.x < x1 + m && w.y > y0 - m && w.y < y1 + m) test(null, w.x, w.y, 1, 0, 12, 6, 0, 0);
+    // peds and cows in the corridor (a fleeing driver doesn't brake for them)
+    if (!(d.fleeT > 0) && this.pgrid.size) {
+      const pm = 20;
+      for (let gx = Math.floor((x0 - pm) / C); gx <= Math.floor((x1 + pm) / C); gx++) {
+        for (let gy = Math.floor((y0 - pm) / C); gy <= Math.floor((y1 + pm) / C); gy++) {
+          const bk = this.pgrid.get(gx * 8192 + gy);
+          if (bk) for (const p of bk) {
+            if (p.x < x0 - pm || p.x > x1 + pm || p.y < y0 - pm || p.y > y1 + pm) continue;
+            if (p.kind === 'cow') test(null, p.x, p.y, Math.sin(p.ang), -Math.cos(p.ang), 28, 6, 0, 0, false, 'ped', p);
+            else test(null, p.x, p.y, 1, 0, 2 * PED.R, PED.R, 0, 0, false, 'ped', p);
+          }
+        }
+      }
+    }
     this.keepRight = clamp(Math.min(pushR, roomR - 0.5), 0, TR.KEEP_RIGHT);
     return best;
   },
@@ -501,9 +549,12 @@ const Traffic = {
     let hit = false;
     // the player's car must be driving into us (not just shoved by us: then it moves away)
     const toward = pc && (c.x - pc.x) * pc.vx + (c.y - pc.y) * pc.vy > 0.5 * pc.speed() * Math.hypot(c.x - pc.x, c.y - pc.y);
-    if (pc && pc !== c && pc.speed() > TR.FLEE_RAM_V && toward && this.touching(c, pc)) hit = true;
+    const ram = !!(pc && pc !== c && pc.speed() > TR.FLEE_RAM_V && toward && this.touching(c, pc));
+    if (ram) hit = true;
     else if (hurt && !c.burning && dv < TR.FLEE_DV && Math.hypot(p.px - c.x, p.py - c.y) < TR.FLEE_NEAR) hit = true;
-    if (hit) this.flee(c, d);
+    if (!hit) return;
+    if (!(c.gang && !c.crewOut)) this.flee(c, d);
+    else if (ram) Game.gangHit(c, G.player);   // a crew: only a ram here; damage comes with its source (Game.damageCar)
   },
   touching(a, b) {
     if (Math.abs(a.x - b.x) > (a.len + b.len) / 2 + 8 || Math.abs(a.y - b.y) > (a.len + b.len) / 2 + 8) return false;
@@ -532,10 +583,12 @@ const Traffic = {
     let o = d.lead;
     for (let i = 0; i < 8 && o; i++) {
       if (o === 'walker') return o;
+      if (o === 'ped') return null;                          // never pass a person: wait (honk() honks if it stands there)
       const od = o.driver;
       if (od && od.ai) {
         if (od.pass) return null;                            // it's already passing: follow it
         if (od.why === 'car' || od.why === 'walker') { if (od.blockedT > 8) return o; o = od.lead; continue; }
+        if (od.why === 'ped') return null;                   // queued behind a car waiting for a ped
         return TR_WAITS[od.why] ? null : o;                  // lost / reverse / end: stuck
       }
       if (o.speed() > 5) return null;
@@ -554,7 +607,9 @@ const Traffic = {
   honk(c, d, dt) {
     // fleeing: lean on the horn at anything in the way, after half a second
     const flee = d.fleeT > 0;
-    const who = d.pass ? null : flee ? (d.blockedT > 0.5 ? d.lead : null) : d.blockedT > TR.HONK_AFTER ? this.blockedBy(d) : null;
+    let who = d.pass ? null : flee ? (d.blockedT > 0.5 ? d.lead : null) : d.blockedT > TR.HONK_AFTER
+      ? this.blockedBy(d) || (d.lead === 'ped' && d.leadPed && this.pedStanding(d.leadPed) ? 'ped' : null) : null;
+    if (who && c.gang && !c.crewOut && (who === 'walker' || who === G.player.car)) who = null;   // a crew doesn't honk at the player: it gets out
     if (!who) { d.hornT = 0; c.honking = false; return; }
     d.hornT += dt;
     const [a, b, e, cyc] = TR.HONK_CYCLE, ph = d.hornT % cyc;
@@ -571,13 +626,13 @@ const Traffic = {
       const o = d.pass;
       const ox = o === 'walker' ? G.player.x : o.x, oy = o === 'walker' ? G.player.y : o.y;
       const along = (ox - c.x) * c.fx + (oy - c.y) * c.fy, oLen = o === 'walker' ? 12 : o.len;
-      const lead = d.lead, oncoming = lead && lead !== 'walker' && lead !== o && lead.speed() > 5 &&
+      const lead = d.lead, oncoming = lead && lead !== 'walker' && lead !== 'ped' && lead !== o && lead.speed() > 5 &&
         lead.fx * c.fx + lead.fy * c.fy < -0.5;
       // an oncoming car turned up: give up, unless we're already out (then it waits for us)
       const out = Math.abs((c.x - L.x0) * -L.dy + (c.y - L.y0) * L.dx);
       if (along < -(c.len + oLen) / 2 - 12 || d.passT > TR.PASS_MAX_T || (o !== 'walker' && o.gone) ||
         (oncoming && along > 0 && out < d.passNeed * 0.6) || d.mode !== 'lane') d.pass = null;
-    } else if (d.mode === 'lane' && d.lead && (d.passReady > G.t ||
+    } else if (d.mode === 'lane' && d.lead && d.lead !== 'ped' && (d.passReady > G.t ||
       (d.fleeT > 0 ? d.blockedT > TR.FLEE_PASS_AFTER && (d.lead === 'walker' || d.lead.speed() < 3)
         : d.blockedT > TR.PASS_AFTER && this.blockedBy(d) === d.lead))) {
       const need = c.hw + d.leadLat + 4 - d.leadSide;
@@ -640,16 +695,82 @@ const Traffic = {
     return true;
   },
 
+  // ------------------------------------------------------------------ gang crews (G7) --
+  // a rival mob in clear sight: a member on foot (the nearest), else a crewed rival car
+  rivalNear(c) {
+    const R = GANG_CREW.RIVAL_R;
+    if (G.peds && typeof Peds !== 'undefined') {
+      let best = null, bd = R;
+      for (const p of Peds.near(c.x, c.y, R)) {
+        if (p.kind !== 'ped' || !p.gang || p.gang === c.gang) continue;
+        const pd = dist(p.x, p.y, c.x, c.y);
+        if (pd < bd && Peds.sees(c, p.x, p.y)) { best = p; bd = pd; }
+      }
+      if (best) return best;
+    }
+    for (const o of G.cars) {
+      if (o === c || !o.gang || o.gang === c.gang || o.crewOut || o.wreck || o.gone || !o.driver || !o.driver.ai) continue;
+      if (Math.abs(o.x - c.x) > R || Math.abs(o.y - c.y) > R || dist(o.x, o.y, c.x, c.y) > R) continue;
+      if (typeof Peds !== 'undefined' && Peds.sees(c, o.x, o.y)) return o;
+    }
+    return null;
+  },
+  // brake to a stop, then the crew bails at d.foe (the player, a rival ped, or a rival car's crew)
+  angry(c, d, dt, vf, out) {
+    d.angryT += dt; d.why = 'gang'; d.want = 0; d.pass = null; d.fleeT = 0; d.blockedT = 0;
+    c.honking = false;
+    out.throttle = vf > 10 ? -1 : vf < -10 ? 1 : 0; out.steer = 0;
+    if (c.speed() >= GANG_CREW.BAIL_V) return out;
+    const f = d.foe, calm = () => { d.angry = false; d.foe = null; d.rivalT = 2; };
+    if (f === G.player) Game.gangBail(c, f);
+    else if (f.kind === 'ped') { if (f.dead || f.gone) calm(); else Game.gangBail(c, f); }
+    else if (f.crew) {   // the rival car's crew is already out: take on the nearest of them
+      let q = null, qd = Infinity;
+      for (const p of f.crew) if (!p.dead && !p.gone && dist(p.x, p.y, c.x, c.y) < qd) { q = p; qd = dist(p.x, p.y, c.x, c.y); }
+      if (q) Game.gangBail(c, q); else calm();
+    } else if (f.wreck || f.gone || f.crewOut || !f.driver || !f.driver.ai) calm();
+    else if (!Game.gangBailPair(c, f) && d.angryT > GANG_CREW.RIVAL_WAIT) calm();   // it drove off
+    return out;
+  },
+
+  initDriver(c, d) {
+    d.gang = c.gang || null; if (d.rivalT == null) d.rivalT = Math.random() * GANG_CREW.RIVAL_EVERY;
+    d.id = ++this.nid; d.long = c.len >= TR.LONG; d.wide = c.m.w >= 30; this.enterLane(d, G.city.lanes[d.lane], null); d.blockedT = 0; d.fleeT = 0; d.stuckT = 0; d.revT = 0; d.reT = 0; d.lostT = 0; d.bias = 0; d.acqE = 0; d.revCool = 0;
+    d.room = this.room(c, 2 * c.hw + 6); d.passP = 0; d.pass = null; d.passT = 0; d.passReady = 0; d.hornT = 0; d.calmV = 0; d.hp0 = c.hp; d.pvx = c.vx; d.pvy = c.vy;
+  },
+
+  // carjack-v1: a ped took car c back from the player. The ped becomes its driver (it leaves
+  // G.peds; the car keeps its look), and the car is an AI traffic car again, fleeing at top speed
+  // from the nearest lane heading its way ('lost' mode finds one if none is near).
+  takeOver(c, ped) {
+    if (ped) { ped.gone = true; Peds.dirty = true; if (ped.look != null) c.driverLook = ped.look; }
+    this.index();
+    const probe = { mode: 'lost' };
+    const found = this.reacquire(c, probe, 400);
+    const L = G.city.lanes[found ? probe.lane : 0];
+    const cruise = c.m.max * (L && L.profile === 'highway' ? 0.55 : 0.35);   // the pool's TRAFFIC / HIGHWAY_CRUISE
+    const d = { ai: true, lane: L ? L.id : 0, cruise };
+    c.driver = d; c.traffic = true; c.managed = true;
+    c.sirenOn = false; c.honking = false; c.hornT = -1;
+    this.initDriver(c, d);
+    if (!found) { d.mode = 'lost'; d.lostT = 0; }
+    this.flee(c, d);
+    return d;
+  },
+
   // ------------------------------------------------------------------ controls --
   controls(c, dt) {
     const d = c.driver, out = this.out;
     out.throttle = 0; out.steer = 0; out.hb = false;
     if (c.wreck || !G.city.lanes) return out;
     this.frame();
-    if (!d.id) { d.id = ++this.nid; d.long = c.len >= TR.LONG; d.wide = c.m.w >= 30; this.enterLane(d, G.city.lanes[d.lane], null); d.blockedT = 0; d.fleeT = 0; d.stuckT = 0; d.revT = 0; d.reT = 0; d.lostT = 0; d.bias = 0; d.acqE = 0; d.revCool = 0;
-      d.room = this.room(c, 2 * c.hw + 6); d.passP = 0; d.pass = null; d.passT = 0; d.passReady = 0; d.hornT = 0; d.calmV = 0; d.hp0 = c.hp; d.pvx = c.vx; d.pvy = c.vy; }
+    if (!d.id) this.initDriver(c, d);
     const m = c.m, vf = c.vf();
     this.checkHit(c, d);
+    if (c.gang && !c.crewOut) {   // a mob crew (G7): rivals in sight, then brake and bail
+      if (!d.angry && (d.rivalT -= dt) <= 0) { d.rivalT = GANG_CREW.RIVAL_EVERY; const r = this.rivalNear(c); if (r) Game.gangHit(c, r); }
+      if (d.angry) return this.angry(c, d, dt, vf, out);
+    }
     if (d.fleeT > 0) { d.fleeT -= dt; if (d.fleeT <= 0) d.calmV = vf; }
     const flee = d.fleeT > 0;
     d.calmV = Math.max(0, d.calmV - TR.CALM_DECEL * dt);
@@ -735,7 +856,7 @@ const Traffic = {
       const L = lanes[d.lane], t = (c.x - L.x0) * L.dx + (c.y - L.y0) * L.dy, D = L.len - t - half - 4;
       if (D > -6 && D < 30 + (vf * vf) / (2 * b) && this.oncoming(c, nodes[L.to], L)) lim(reach(0, D), 'left');
     }
-    if (vc < want) { want = vc; why = d.lead === 'walker' ? 'walker' : 'car'; }
+    if (vc < want) { want = vc; why = d.lead === 'walker' || d.lead === 'ped' ? d.lead : 'car'; }
     if (d.mode === 'lane' && !d.ex) { const L = lanes[d.lane]; lim(reach(0, L.len - ((c.x - L.x0) * L.dx + (c.y - L.y0) * L.dy) - half), 'end'); }
     d.want = want; d.why = why;
 
@@ -750,7 +871,20 @@ const Traffic = {
 
     // B4 hooks: blocked by a car/walker (not a light); stuck = wants to go but isn't moving
     const stopped = Math.abs(vf) < 5;
-    d.blockedT = stopped && (why === 'car' || why === 'walker') ? d.blockedT + dt : 0;
+    d.blockedT = stopped && (why === 'car' || why === 'walker' || why === 'ped') ? d.blockedT + dt : 0;
+    // a ped on a zebra waits for a car that's across its path, and that car waits for the ped:
+    // if the ped hasn't moved for PED_STILL s while walking, back up a little to let it through
+    const q = why === 'ped' && stopped ? d.leadPed : null;
+    if (!q) d.pedStill = 0;
+    else if (d.pq === q && Math.abs(q.x - d.pqx) + Math.abs(q.y - d.pqy) < 0.5) d.pedStill += dt;
+    else { d.pq = q; d.pqx = q.x; d.pqy = q.y; d.pedStill = 0; }
+    if (q && q.state === 'walk' && d.pedStill > TR.PED_STILL && this.roomBehind(c, 24)) {
+      d.pedStill = 0; d.revT = TR.PED_BACK_T; d.revSteer = 0; d.pedBacks = (d.pedBacks || 0) + 1;
+    }
+    if (c.gang && !c.crewOut && d.blockedT > GANG_CREW.BLOCK_T) {   // stopped behind the player: out they get
+      const b = this.blockedBy(d);
+      if (b && (b === 'walker' || b === G.player.car)) Game.gangHit(c, G.player);
+    }
     this.honk(c, d, dt);
     d.stuckT = stopped && want > 20 ? d.stuckT + dt : 0;
     if (d.stuckT > TR.STUCK_T) { d.stuckT = 0; d.revT = TR.REVERSE_T; d.revSteer = Math.sign(out.steer) || 1; d.revCool = TR.REVERSE_T + 1.5; d.unsticks = (d.unsticks || 0) + 1; }

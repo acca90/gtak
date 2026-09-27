@@ -31,6 +31,7 @@
 </header>
 <main id="main"></main>
 <script src="assets/atlas.js"></script>
+<script src="src/core.js"></script>
 <script>
 // Every Aseprite sheet, one card per tag, all frames side by side (or
 // animated). Regenerate with tools/art.sh and reload to review changes.
@@ -89,6 +90,39 @@ for (const [name, s] of Object.entries(ATLAS)) {
   im.src = s.src; images[name] = im;
 }
 zoomEl.oninput = build;
+
+// Paint shop review (paintshop-v1): every paintable model in stock + every PAINTS colour,
+// through the game's own Assets.painted. Rows: day on asphalt, then dusk and night light.
+function buildPaints() {
+  const MODELS = Object.keys(CAR_BODY), Z = 2, CW = 34, CH = 66;
+  const sec = document.createElement('section'); sec.id = 'paints';
+  sec.innerHTML = '<h2>paint shop <span style="color:var(--dim)">stock + PAINTS[0..' + (PAINTS.length - 1) + '] · normal, brake · day / dusk / night</span></h2>';
+  const names = ['STOCK'].concat(PAINTS.map((p) => p.name));
+  const cv = document.createElement('canvas');
+  const light = [null, '#f0b096', '#2f3572'];
+  cv.width = names.length * CW * 2 * Z; cv.height = (14 + light.length * MODELS.length * CH) * Z;
+  const ctx = cv.getContext('2d'); ctx.imageSmoothingEnabled = false;
+  const off = mkCanvas(cv.width / Z, cv.height / Z), o = off.ctx;
+  o.fillStyle = '#464b66'; o.fillRect(0, 0, off.width, off.height);
+  names.forEach((n, i) => Font.draw(o, n.split(' ')[0], i * CW * 2 + 2, 3, { color: i ? PAINTS[i - 1].ramp[1] : PAL.x }));
+  light.forEach((amb, L) => {
+    const y0 = 14 + L * MODELS.length * CH;
+    MODELS.forEach((m, r) => names.forEach((_, i) => {
+      const img = i ? Assets.painted('cars', m, i - 1) : Assets.sheets.cars.img;
+      for (let b = 0; b < 2; b++) Assets.draw(o, 'cars', Assets.frame('cars', m, b), i * CW * 2 + b * CW, y0 + r * CH, img);
+    }));
+    if (amb) {
+      o.globalCompositeOperation = 'multiply'; o.fillStyle = amb;
+      o.fillRect(0, y0, off.width, MODELS.length * CH); o.globalCompositeOperation = 'source-over';
+    }
+  });
+  ctx.drawImage(off, 0, 0, cv.width, cv.height);
+  sec.appendChild(cv); main.appendChild(sec);
+  const a = document.createElement('a'); a.href = '#paints'; a.textContent = 'paints'; nav.appendChild(a);
+}
+// gallery.html#paints shows only this section (handy for a screenshot)
+Assets.load(() => { const go = () => { if (!main.children.length) return setTimeout(go, 50); if (location.hash === '#paints') main.innerHTML = ''; buildPaints(); }; go(); });
+zoomEl.addEventListener('input', () => setTimeout(buildPaints, 0));
 </script>
 </body>
 </html>

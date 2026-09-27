@@ -98,6 +98,14 @@ Sound.catalog.forEach(([group, items], gi) => {
       slider(row, 'amount', 0, 100, 100, 'spin');
       slider(row, 'throttle', 0, 100, 50, 'throttle');
     } else if (item.ctl === 'amount') slider(row, 'amount', 0, 100, 70, 'amount');
+    else if (item.ctl === 'herd' || item.ctl === 'jet' || item.ctl === 'crane') {
+      slider(row, 'amount', 0, 100, item.ctl === 'herd' ? 30 : item.ctl === 'jet' ? 20 : 70, 'amount');
+      if (item.ctl === 'jet') slider(row, 'far', 0, 100, 0, 'far');
+      const l = document.createElement('label');
+      l.innerHTML = '<input type="checkbox"> ' + (item.ctl === 'jet' ? 'reverse thrust' : item.ctl === 'herd' ? 'bull charging' : 'hoisting');
+      l.firstChild.onchange = (e) => { row.state.rev = e.target.checked; };
+      row.el.appendChild(l);
+    }
     row.meter = document.createElement('span');
     row.meter.className = 'meter';
     row.el.appendChild(row.meter);

@@ -1,7 +1,10 @@
 # Scope (set by the user; don't expand without asking)
 
-- **Traffic: unlocked** 2026-09-26 (spec `docs/specs/traffic-v1.md`); phase A (the AOV) first, then phase B.
-  **No pedestrians yet**: they come later and use the same AOV, so keep 3-tile sidewalks compatible.
+- **Traffic: unlocked** 2026-09-26 (spec `docs/specs/traffic-v1.md`).
+- **Pedestrians and cows: unlocked** 2026-09-27 (spec `docs/specs/peds-v1.md`). Carjacking moving traffic is the
+  next round, not this one.
+- **Gangs / mobs and the story: unlocked** 2026-09-27, owned by `screenplay-agent`. `mobs.txt` is the user's
+  draft: read it, never edit it.
 - **Sound:** being built now (spec `docs/specs/sound-v1.md`, owned by `sound-agent`). Radio music is still on hold.
 - **Radio:** on hold at the user's request. `radio-agent` may only design and write specs until the
   user unlocks it.

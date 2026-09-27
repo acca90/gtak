@@ -48,3 +48,8 @@ const avg = times.reduce((a, b) => a + b, 0) / times.length;
 const P = G.perf;
 console.log(`update: avg ${avg.toFixed(3)} ms  p95 ${times[Math.floor(times.length * 0.95)].toFixed(3)} ms  max ${times[times.length - 1].toFixed(3)} ms  over ${ticks} ticks`);
 console.log(`cars ${P.cars}  updated ${P.updated}  pairs ${P.pairs}`);
+if (G.peds) {
+  const by = {};
+  for (const p of G.peds) { const k = p.kind + (p.dead ? ':dead' : ':' + p.state); by[k] = (by[k] || 0) + 1; }
+  console.log(`peds ${G.peds.filter((p) => p.kind === 'ped' && !p.dead).length} (budget ${vm.runInContext('Peds.budget', ctx)})  ` + Object.entries(by).map(([k, v]) => k + ' ' + v).join('  '));
+}

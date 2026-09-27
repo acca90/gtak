@@ -1,6 +1,6 @@
 # Agents and coordination (`.claude/agents/`)
 
-Six specialists. Each owns specific files or code sections and hands off the rest. Subagents
+Seven specialists. Each owns specific files or code sections and hands off the rest. Subagents
 can't call each other, so **the main session is the coordinator**: it splits the work, writes the
 shared spec, runs the agents, and then integrates and verifies the result.
 
@@ -12,9 +12,10 @@ shared spec, runs the agents, and then integrates and verifies the result.
 | `geo-agent` | `src/city.js`: regions, roads, blocks, river, rail line, placement, spawn spots, region vehicle mixes | map realism, where new assets appear |
 | `sound-agent` | `src/audio.js` (engine, mixer, buses, positional audio), SFX, `assets/sounds.js`, one-line sound hooks | engines, weapons, phone, impacts, ambience |
 | `radio-agent` | **on hold**, then later: `src/radio.js`, stations and music, the phone's RADIO app | station design (specs only while on hold) |
+| `screenplay-agent` | `docs/story/`, `src/missions.js`, `src/gangs.js`: story, characters, dialogue, missions, the mobs' respect / war / turf rules | factions, mission scripts, respect tables, new mission types |
 
-Shared or unowned code (`core.js` including `KEYMAP`, the main loop, HUD, missions, and the
-phone apart from its RADIO app) stays with the coordinator unless a task hands it to an agent
+Shared or unowned code (`core.js` including `KEYMAP`, the main loop, HUD, peds and cops, and the
+phone apart from its RADIO app and its contact/text content) stays with the coordinator unless a task hands it to an agent
 explicitly. **Keys are shared:** agents propose bindings, and the coordinator approves them.
 
 **Sound hooks:** sound-agent may add one-line `Sound.*` calls inside other agents' functions

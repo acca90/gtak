@@ -1,28 +1,51 @@
 # geo-agent — decision log
 Format and rules: `.claude/rules/decisions.md`. Newest first.
 
+## 2026-09-27 · Paint shops and the cops hotspot (paintshop-v1 S1, cops-v1 K1)
+- **Decision:** `c.paintshops` `{ id, name, area, district, x, y, ang, bay{x0,y0,x1,y1}, drive, b }`
+  (px; x,y = bay centre; ang = car heading nose to the door; bay 48x64 px; `b.sign 'PAINT'`,
+  `b.paintshop = id`). Placed in a no-RNG pass after the parked-car thinning, before
+  `resolveFrames`: a 6x5 garage flush on a block's inner edge + a 4-deep concrete apron, only over
+  LOT/CONCRETE/PLAZA/LAWN (no RNG in resolveFrames for those, so nothing else moves). Sites: the
+  `shops` block (not a gun-store one) nearest each city grid's centre, south side, far east end;
+  Ironworks: nearest warehouse/factory, first valid side. The driveway to the asphalt is cleared
+  and fences get a gate. Names Candy Coat, Spray Shack, Pastel Paint & Body, Iron Coat. The wall
+  and roof fall back to `shedr`/`teal` until pixel-agent ships `wall_paintshop`/`roof_paintshop`.
+  `ZONES[z].peds.cops` = downtown .06, suburbs .03, industrial .04, rural .02, airport .08, else 0;
+  `c.policeStation` = the station's north door on its sidewalk. geo-report checks the bays.
+- **Why:** coordinator tasks S1/K1; src/paint.js and src/peds.js read these fields.
+- **Status:** active
+
+## 2026-09-27 · Airport and port route data (ambient-v1 X1)
+- **Decision:** `City.buildRoutes` (last, no RNG) fills `c.airport` and `c.port`. Arrivals land north,
+  departures line up at the **south** end and roll north (not "taxi to the north end": that would
+  leave no runway). Taxi corners are 96-px fillets (props 60), points <= 32 px apart; pushbacks are
+  a separate `taxi.push` list. The runway airliner is stand 6, kind 'runway': no taxi-in, it
+  backtracks south and turns round in a teardrop. Ship deck slots follow the art's grid (8 bays at
+  80 px, 6 rows at 28 px). Plane and crane sprites stay in `c.sprites` with `dyn: 'plane'|'crane'`
+  (no Render change); obstacles tagged `plane` / `crane`. Full shapes: [graph-contracts](graph-contracts.md).
+- **Why:** coordinator task X1; vehicles-agent's src/airport.js builds on it. Don't rename fields.
+- **Status:** active
+
+## 2026-09-27 · Ped and traffic densities raised after screenshots
+- **Decision:** peds downtown 16, suburbs 2.5, industrial 3, rural 1.5, airport 6; traffic downtown 5.0,
+  airport 2.5. The spec tables (peds-v1 §2.1, traffic-v1 B.2) match.
+- **Why:** coordinator, from screenshots (downtown read empty and thin).
+- **Status:** active
+
+## 2026-09-27 · Pedestrian walk graph, cow pens and ped zones (peds-v1 P1)
+- **Decision:** `buildWalks` (no RNG): `c.walks`/`c.walkNodes` on sidewalk-ring centre lines; crossing
+  edges = road stretch only, `xing = { node (signalised lane node or null), axis (of the road crossed) }`;
+  `c.pens` replace cow props; `ZONES[z].peds` from spec §2.1; furniture moved off walk lines.
+  Full contract: [graph-contracts](graph-contracts.md).
+- **Why:** task P1 of docs/specs/peds-v1.md; src/peds.js builds on it. Don't rename fields.
+- **Status:** active
+
 ## 2026-09-26 · Traffic lane graph: contract and lane offsets
-- **Decision:** `City.buildLanes` (last step of `build`, no RNG) fills `c.lanes` / `c.nodes`
-  with the B1 contract of docs/specs/traffic-v1.md: lanes `{ id, x0, y0, x1, y1, dx, dy, len,
-  zone, profile, from, to, stop, axis, off, street, yield, xings? }`, nodes `{ id, x, y, kind
-  'int'|'turn', signal, arms, profile, exits: [{ from, to, turn, path }], loop? }`.
-  Right-hand traffic (southbound lanes on the west half, eastbound on the south half, which
-  matches the avenue stop lines in `resolveFrames`). One edge per straight run between boxes
-  (collinear runs chained: Route 1 + bridge). Offsets from the centre line: avenue 20, street 17,
-  rough 20, dirt 16, court 16, highway 44 (outer of the 2 painted lanes; the art has 2 per side,
-  not 3). Dead ends and cul-de-sacs get a 'turn' node with a loop (counter-clockwise on
-  screen) on the edge's centre line: 56 px (band half-width 72, or bulb r 80 minus the 8-px
-  stem/bulb misalignment and a 28-px car); smaller loops made cars run wide (2026-09-26 fix). Signal = avenue box, 3+ arms, lights still standing. `stop` = front-bumper point:
-  3 tiles before the box on avenue grid runs (the painted line), else 4 px; null at <3 arms.
-  `yield` everywhere at unsignalised 3+ arm nodes except the two arms of a through road that
-  outranks the rest. Lanes stop at box edges; exits carry the path through the box.
-  Index: 128-px cells; `laneAt(x, y, r=24, dx, dy)`, `lanesIn(rect)`, `drawLanes(ctx, rect)`.
-  Street curb spots moved to across 1.5/7.5 (on the verge), rough to 1/8 (gravel shoulder,
-  4 px clear of a 32-wide heavy in the lane), so parked cars leave the lanes clear; `curbSpot` accepts VERGE. geo-report `--check` verifies
-  the graph.
-- **Why:** task B1 (traffic unlocked by the user 2026-09-26); vehicles-agent and the coordinator
-  build against the contract, so don't rename fields.
-- **Where:** `buildLanes`, `laneAt`, `lanesIn`, `drawLanes` in src/city.js; `ZONES[z].traffic`.
+- **Decision:** `buildLanes` fills `c.lanes`/`c.nodes` per traffic-v1 B1 (right-hand traffic; offsets
+  avenue 20, street 17, rough 20, dirt 16, court 16, highway 44; U-turn loop 56 px; avenue stop line
+  3 tiles back). Street/rough curb spots on the verge/shoulder. Full contract: [graph-contracts](graph-contracts.md).
+- **Why:** task B1; vehicles-agent and the coordinator build against it. Don't rename fields.
 - **Status:** active
 
 ## 2026-09-26 · Far fewer parked cars: ~130 at start, a share per district and spot kind
@@ -130,14 +153,7 @@ Format and rules: `.claude/rules/decisions.md`. Newest first.
   x 283-286 from the freight yard (y 372) to Union Station (y 567), with the station stop at y 540.
 - **Status:** active. Supersedes "Fixed anchors" (block 4,4 / 9,1).
 
-## 2026-09-25 · Four regions by quadrant, blocks merged by removing road segments
-- **Decision:** NW Downtown, NE Ironworks, SW Maple Hills, SE Golden Fields on a 10x10 island.
-- **Status:** superseded by 2026-09-25 "World v2 layout" (the segment-merge technique is kept per grid).
-
-## 2026-09-25 · Street geometry: 7-tile roads, 3-tile sidewalks, 16-px tiles
-- **Decision:** 7-tile roads, pitch 27, 10x10 grid, 3-tile promenade.
-- **Status:** superseded by 2026-09-25 "Road profiles on a 9-tile band".
-
-## 2026-09-25 · Fixed anchors
-- **Decision:** spawn at block 4,4, garage at Ironworks block 9,1.
-- **Status:** superseded by 2026-09-25 "Anchors (World v2)".
+## Superseded (kept for history)
+- 2026-09-25 Four regions by quadrant on a 10x10 island: superseded by "World v2 layout".
+- 2026-09-25 Street geometry (7-tile roads, pitch 27): superseded by "Road profiles on a 9-tile band".
+- 2026-09-25 Fixed anchors (spawn block 4,4, garage 9,1): superseded by "Anchors (World v2)".

@@ -92,6 +92,10 @@ const Render = {
     for (const s of c.trafficLights) I.signals.add(s, s.x, s.y, s.x, s.y);
     for (const k of c.cables) I.cables.add(k, Math.min(k.ax, k.bx), Math.min(k.ay, k.by), Math.max(k.ax, k.bx), Math.max(k.ay, k.by));
     for (const op of c.paints) { const b = this.paintBox(op); I.paints.add(op, b[0], b[1], b[0] + b[2], b[1] + b[3]); }
+    for (const s of c.paintshops || []) if (s.bay) {          // paint shop bay mats, baked into the ground
+      const op = Object.assign({ t: 'paintbay', ang: s.ang }, s.bay), b = this.paintBox(op);
+      I.paints.add(op, b[0], b[1], b[0] + b[2], b[1] + b[3]);
+    }
     for (const p of c.props) {
       if (p.sprite === 'bench') I.baked.add(p, p.x - 8, p.y - 8, p.x + 8, p.y + 8);
       else I.props.add(p, p.x - 24, p.y - 24, p.x + 24, p.y + 24);
@@ -203,6 +207,20 @@ const Render = {
       if (op.rot) ctx.rotate(Math.PI / 2);
       Assets.draw(ctx, 'big', Assets.frame('big', 'pool'), -24, -24);
       ctx.restore();
+    } else if (op.t === 'paintbay') {
+      // 9-slice mat (paint:bay_mat) over the bay rect, spray-gun stencil (paint:bay_icon) in the middle
+      const P = Assets.sheets.paint, img = P.img;
+      const x0 = Math.round(Math.min(op.x0, op.x1)), y0 = Math.round(Math.min(op.y0, op.y1));
+      const w = Math.round(Math.abs(op.x1 - op.x0)), h = Math.round(Math.abs(op.y1 - op.y0));
+      const cols = Math.max(2, Math.ceil(w / 16)), rows = Math.max(2, Math.ceil(h / 16));
+      const m0 = Assets.frame('paint', 'bay_mat', 0), i0 = Assets.frame('paint', 'bay_icon', 0);
+      for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+        const k = (j === 0 ? 0 : j === rows - 1 ? 6 : 3) + (i === 0 ? 0 : i === cols - 1 ? 2 : 1);
+        const x = i === cols - 1 ? x0 + w - 16 : x0 + i * 16, y = j === rows - 1 ? y0 + h - 16 : y0 + j * 16;
+        ctx.drawImage(img, (m0 + k) * 16, 0, 16, 16, x, y, 16, 16);
+      }
+      const cx = Math.round(x0 + w / 2 - 16), cy = Math.round(y0 + h / 2 - 16);
+      for (let q = 0; q < 4; q++) ctx.drawImage(img, (i0 + q) * 16, 0, 16, 16, cx + (q % 2) * 16, cy + (q >> 1) * 16, 16, 16);
     } else if (op.t === 'pipe') {
       ctx.fillStyle = PAL.d; ctx.fillRect(Math.round(op.x0), Math.round(op.y0) - 3, Math.round(op.x1 - op.x0), 6);
       ctx.fillStyle = PAL.l; ctx.fillRect(Math.round(op.x0), Math.round(op.y0) - 2, Math.round(op.x1 - op.x0), 2);
@@ -294,6 +312,165 @@ const Render = {
     });
   },
 
+  // ------------------------------------------------------------ blood --
+  // Deep red, opaque, pixel-crisp (whole-pixel runs, no antialiasing). Not palette
+  // colours on purpose: the pastel reds read pink, blood has to read as blood.
+  // Tones: 0 body (dark), 1 rim / thin film (lighter), 2 wet sheen (top-left, lit).
+  BLOOD: ['#650d1b', '#8f1b29', '#bf3f4b'],
+  _bloodShapes: new Map(),
+  // rows [dx, dy, len, tone] of a pool of radius `size` around (0,0), sorted by tone.
+  // The seed fixes the outline, so a pool can grow (bloodPool) and then be committed
+  // (blood) with the same shape.
+  bloodShape(size, seed) {
+    size = Math.max(1, Math.round(size * 2) / 2);
+    const key = size + ':' + seed;
+    let runs = this._bloodShapes.get(key);
+    if (runs) return runs;
+    const R = rng(seed | 0);
+    const ph = [R() * 6.283, R() * 6.283, R() * 6.283];
+    const rad = (a) => size * (0.8 + 0.12 * Math.sin(2 * a + ph[0]) + 0.08 * Math.sin(3 * a + ph[1]) + 0.05 * Math.sin(5 * a + ph[2]));
+    const drops = [];
+    const nd = size >= 5 ? 2 + Math.floor(R() * 3) : 0;
+    for (let i = 0; i < nd; i++) {
+      const a = R() * 6.283, d = size * (1.0 + R() * 0.3);
+      drops.push([Math.cos(a) * d, Math.sin(a) * d, 0.7 + R() * Math.min(1.4, size * 0.12)]);
+    }
+    const sheenR = size >= 5 ? 0.8 + size * 0.07 : 0;
+    const tone = (px, py) => {
+      const d = Math.hypot(px, py), r = rad(Math.atan2(py, px));
+      if (d <= r) {
+        if (sheenR && (px + r * 0.38) ** 2 + (py + r * 0.4) ** 2 <= sheenR * sheenR) return 2;
+        return d > r - 1.3 ? 1 : 0;
+      }
+      for (const [x, y, rr] of drops) if ((px - x) ** 2 + (py - y) ** 2 <= rr * rr) return rr > 1.3 ? 0 : 1;
+      return -1;
+    };
+    runs = [];
+    const S = Math.ceil(size * 1.5) + 2;
+    for (let dy = -S; dy <= S; dy++) {
+      let cur = -1, start = 0;
+      for (let dx = -S; dx <= S + 1; dx++) {
+        const t = dx > S ? -1 : tone(dx + 0.5, dy + 0.5);
+        if (t !== cur) { if (cur >= 0) runs.push([start, dy, dx - start, cur]); cur = t; start = dx; }
+      }
+    }
+    runs.sort((a, b) => a[3] - b[3]);
+    if (this._bloodShapes.size > 256) this._bloodShapes.delete(this._bloodShapes.keys().next().value);
+    this._bloodShapes.set(key, runs);
+    return runs;
+  },
+  // draw a pool right now (e.g. growing under a fresh corpse); x, y in ctx coordinates
+  bloodPool(ctx, x, y, size, seed) {
+    x = Math.round(x); y = Math.round(y);
+    let tone = -1;
+    for (const [dx, dy, len, t] of this.bloodShape(size, seed)) {
+      if (t !== tone) { tone = t; ctx.fillStyle = this.BLOOD[t]; }
+      ctx.fillRect(x + dx, y + dy, len, 1);
+    }
+  },
+  // a permanent pool of radius `size` (6-14 looks right under a body). R is a random
+  // function or a numeric seed (pass the seed used by bloodPool to commit the same shape).
+  // Returns the seed.
+  blood(x, y, size = 10, R = Math.random) {
+    const seed = typeof R === 'number' ? R | 0 : Math.floor(R() * 2147483647);
+    x = Math.round(x); y = Math.round(y);
+    const S = Math.ceil(size * 1.5) + 3;
+    this.paint(x - S, y - S, S * 2, S * 2, (ctx) => this.bloodPool(ctx, x, y, size, seed));
+    return seed;
+  },
+  // a drag streak from (x0,y0) to (x1,y1): w px wide at the start, thinning and
+  // breaking up towards the end, with lighter streak lines along the path
+  smear(x0, y0, x1, y1, w = 5, R = Math.random) {
+    const L = Math.hypot(x1 - x0, y1 - y0);
+    if (L < 1) return;
+    const ux = (x1 - x0) / L, uy = (y1 - y0) / L, nx = -uy, ny = ux;
+    const half = Math.max(1, Math.floor(w / 2));
+    const lane = [];
+    for (let k = -half; k <= half; k++) lane.push(R() < 0.35 ? 1 : 0);
+    const seen = new Map();
+    for (let i = 0; i <= L; i += 0.6) {
+      const t = i / L;
+      const hw = half * (1 - 0.55 * t) + (R() - 0.5) * 0.6;
+      for (let k = -half; k <= half; k++) {
+        if (Math.abs(k) > hw) continue;
+        if (R() > 1 - 0.6 * t * t) continue;              // breaks up toward the end
+        for (const s of [-0.5, 0, 0.5]) {
+          const px = Math.round(x0 + ux * i + nx * (k + s)), py = Math.round(y0 + uy * i + ny * (k + s));
+          const key = px + ',' + py;
+          const tone = Math.abs(k) >= hw - 0.8 || t > 0.8 ? 1 : lane[k + half];
+          if (!seen.has(key) || seen.get(key)[2] > tone) seen.set(key, [px, py, tone]);
+        }
+      }
+    }
+    const pix = [...seen.values()].sort((a, b) => a[2] - b[2]);
+    const pad = half + 3;
+    this.paint(Math.min(x0, x1) - pad, Math.min(y0, y1) - pad, Math.abs(x1 - x0) + pad * 2, Math.abs(y1 - y0) + pad * 2, (ctx) => {
+      let tone = -1;
+      for (const [px, py, t] of pix) { if (t !== tone) { tone = t; ctx.fillStyle = this.BLOOD[t]; } ctx.fillRect(px, py, 1, 1); }
+    });
+  },
+  // spatter sprayed from (x, y) along direction (dx, dy): a small core, droplets in a
+  // ~60° cone, bigger near, finer and elongated far out
+  bloodSplat(x, y, dx, dy, R = Math.random) {
+    const l = Math.hypot(dx, dy) || 1;
+    const base = Math.atan2(dy / l, dx / l);
+    x = Math.round(x); y = Math.round(y);
+    const pts = [];
+    for (let oy = -2; oy <= 2; oy++) for (let ox = -2; ox <= 2; ox++) {      // ragged core
+      const d = Math.hypot(ox, oy);
+      if (d <= 1 || (d < 2.3 && R() < 0.45)) pts.push([x + ox, y + oy, 1, 1, d > 1.5 ? 1 : 0]);
+    }
+    const n = 16 + Math.floor(R() * 10);
+    for (let i = 0; i < n; i++) {
+      const a = base + (R() - 0.5) * (R() < 0.85 ? 1.05 : 2.2);
+      const d = 2 + Math.pow(R(), 1.4) * 24;
+      const px = Math.round(x + Math.cos(a) * d), py = Math.round(y + Math.sin(a) * d);
+      const s = d < 9 && R() < 0.6 ? 2 : 1;
+      pts.push([px, py, s, s, d < 12 ? 0 : 1]);
+      if (d > 6 && R() < 0.55) pts.push([Math.round(px + Math.cos(a)), Math.round(py + Math.sin(a)), 1, 1, 1]);   // streak
+    }
+    pts.sort((a, b) => a[4] - b[4]);
+    this.paint(x - 30, y - 30, 60, 60, (ctx) => {
+      let tone = -1;
+      for (const [px, py, w, h, t] of pts) { if (t !== tone) { tone = t; ctx.fillStyle = this.BLOOD[t]; } ctx.fillRect(px, py, w, h); }
+    });
+  },
+  // one tyre print of blood (like skid), fading with a (1 fresh .. 0 gone)
+  bloodPrint(x, y, a = 1) {
+    if (a <= 0.05) return;
+    x = Math.round(x); y = Math.round(y);
+    const alpha = (0.25 + 0.6 * a).toFixed(2);
+    this.paint(x - 2, y - 2, 4, 4, (ctx) => { ctx.fillStyle = `rgba(110,16,30,${alpha})`; ctx.fillRect(x - 1, y - 1, 2, 2); });
+  },
+
+  // ----------------------------------------------------------- bubble --
+  // speech bubble in SCREEN coords: (x, y) is where the tail points (above the
+  // speaker's head). Cream rounded box, dark outline, soft drop shadow, Font text.
+  // Clamped to the view horizontally. o.color = text colour (default dark).
+  bubble(ctx, x, y, text, o = {}) {
+    text = String(text).toUpperCase();
+    const w = Font.width(text) + 8, h = 13;
+    const W = (typeof G !== 'undefined' && G.cam && G.cam.w) || ctx.canvas.width;
+    x = Math.round(x); y = Math.round(y);
+    const bx = Math.max(2, Math.min(W - w - 2, x - (w >> 1))), by = Math.max(2, y - h - 3);
+    const tx = Math.max(bx + 3, Math.min(bx + w - 5, x));
+    const box = (ox, oy, c) => {
+      ctx.fillStyle = c;
+      ctx.fillRect(bx + ox + 1, by + oy, w - 2, h);
+      ctx.fillRect(bx + ox, by + oy + 1, w, h - 2);
+      ctx.fillRect(tx + ox - 1, by + oy + h, 3, 2);
+      ctx.fillRect(tx + ox - 1, by + oy + h + 2, 2, 1);
+    };
+    box(1, 1, 'rgba(18,20,46,0.35)');
+    box(0, 0, PAL.K);
+    ctx.fillStyle = PAL.x;
+    ctx.fillRect(bx + 2, by + 1, w - 4, h - 2);
+    ctx.fillRect(bx + 1, by + 2, w - 2, h - 4);
+    ctx.fillRect(tx, by + h - 1, 1, 2);                      // tail opening
+    ctx.fillStyle = PAL.c; ctx.fillRect(bx + 2, by + 1, w - 4, 1);   // lit top edge
+    Font.draw(ctx, text, bx + 4, by + 3, { color: o.color || PAL.k, outline: false });
+  },
+
   bakeMinimap() {
     const c = this.city;
     const m = (this.minimap = mkCanvas(c.W, c.H));
@@ -314,6 +491,7 @@ const Render = {
       red: hex(PAL.R), slate: hex(PAL.d), green: hex(PAL.G), brown: hex(PAL.N), barn: hex(PAL.r),
       container_red: hex(PAL.R), container_blue: hex(PAL.B), container_teal: hex(PAL.E), container_yellow: hex(PAL.L),
       stands: hex(PAL.R), arch: hex(PAL.C), hospital: hex(PAL.x), police: hex(PAL.B), hangar: hex(PAL.l), stadium: hex(PAL.x),
+      paintshop: hex(PAL.P),
     };
     for (let i = 0; i < c.W * c.H; i++) {
       const col = colors[c.kind[i]] || hex(PAL.m);
@@ -356,8 +534,29 @@ const Render = {
         return grid;
       };
       b.faces = { s: face(b.w), n: face(b.w), e: face(b.h), w: face(b.h) };
+      if (b.paintshop !== undefined) this.paintshopFaces(b);
       b.cache = new Map();
       b.roofs = {};
+    }
+  },
+
+  // paint shop garage (paintshop-v1): on the face toward its bay, the roll-up door sits on the
+  // module nearest the bay's centre, flanked by a window and the spray-can mural; the other
+  // faces get windows only (no doors). Ground row only: the garage is one storey.
+  paintshopFaces(b) {
+    const s = (this.city.paintshops || []).find((p) => p.id === b.paintshop);
+    if (!s || !s.bay) return;
+    const bx = (s.bay.x0 + s.bay.x1) / 2, by = (s.bay.y0 + s.bay.y1) / 2;
+    const side = by >= b.y + b.h ? 's' : by <= b.y ? 'n' : bx >= b.x + b.w ? 'e' : 'w';
+    for (const f of ['s', 'n', 'e', 'w']) {
+      const grid = b.faces[f], row = grid[grid.length - 1], n = row.length;
+      const along = f === side ? (f === 's' || f === 'n' ? bx - b.x : by - b.y) : -1;
+      const door = along < 0 ? -1 : clamp(Math.floor(along / MODULE), 0, n - 1);
+      for (let i = 0; i < n; i++) {
+        if (i === door) row[i] = [2, 6];
+        else if (door >= 0) row[i] = i < door ? [0, 4] : [3, -1];
+        else row[i] = i % 2 ? [3, -1] : [1, i % 4 ? 5 : -1];
+      }
     }
   },
 
@@ -609,6 +808,11 @@ const Render = {
       ctx.fillStyle = PAL.K; ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
       ctx.fillStyle = PAL.k; ctx.fillRect(x, y, w, h);
     }
+    if (b.paintshop !== undefined) {           // paint shop: one neon colour per letter
+      const RAINBOW = [PAL.z, PAL.L, PAL.q, PAL.C, PAL.p];
+      for (let i = 0; i < text.length; i++) Font.draw(ctx, text[i], x + 4 + i * 6, y + 2, { color: RAINBOW[i % RAINBOW.length], outline: null });
+      return;
+    }
     Font.draw(ctx, text, x + 4, y + 2, { color: neon, outline: null });
   },
 
@@ -791,8 +995,8 @@ const Render = {
   // frames of props:traffic_light: 0 red, 1 yellow, 2 green
   // 22 s cycle, one global phase: v green 8 s, amber 2 s, then 1 s all-red; h the same, offset 11 s
   // (2 green, 1 amber, 0 red). The all-red second lets amber runners clear before the other way goes.
-  signalFrame(axis) {
-    const t = (G.t % 22 + 22) % 22;
+  signalFrame(axis, at = G.t) {   // at: a time (s), to look ahead
+    const t = (at % 22 + 22) % 22;
     const v = t < 8 ? 2 : t < 10 ? 1 : 0;
     const h = t < 11 ? 0 : t < 19 ? 2 : t < 21 ? 1 : 0;
     return axis === 'v' ? v : h;

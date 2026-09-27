@@ -101,12 +101,12 @@ of each zone in the AOV, so crossing from the suburbs into downtown fills up nat
 
 | Zone | Density | Mix (weights) |
 |---|---|---|
-| downtown | 3.0 | sedan 20, taxi 18, hatch 12, suv 10, bus 8, van 6, sport 4, muscle 3, ambulance 3, truck 2 |
+| downtown | 5.0 (raised 2026-09-27 after screenshots; was 3.0) | sedan 20, taxi 18, hatch 12, suv 10, bus 8, van 6, sport 4, muscle 3, ambulance 3, truck 2 |
 | suburbs | 0.5 | hatch 25, sedan 25, suv 20, pickup 8, muscle 4, sport 3 |
 | industrial | 1.2 | truck 16, semi 12, flatbed 8, tanker 6, mixer 6, garbage 5, van 6, pickup 5 |
 | rural (farms) | 0.4 | pickup 14, tractor 12, truck 8, flatbed 6, harvester 3, suv 4, hatch 3, sedan 3 |
 | highway | 1.2 | sedan 14, suv 10, hatch 8, truck 8, semi 6, tanker 3, bus 2, sport 5, muscle 4, van 5 |
-| airport | 1.5 | taxi 16, sedan 10, van 10, bus 4, suv 6 |
+| airport | 2.5 (raised 2026-09-27 after screenshots; was 1.5) | taxi 16, sedan 10, van 10, bus 4, suv 6 |
 | wild | 0.3 | pickup 12, suv 12, hatch 5, sedan 5, van 3 |
 
 ### B.3 Tasks

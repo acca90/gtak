@@ -1,6 +1,39 @@
 # weapons-agent — decision log
 Format and rules: `.claude/rules/decisions.md`. Newest first.
 
+## 2026-09-27 · Weapons vs bodies (spec docs/specs/peds-v1.md P4)
+- **Decision:** player punch `WEAPONS.fist` = 8 dmg, 0.38 s, 13 px reach, ±1.0 rad cone, push
+  60 px/s, 1 dmg to cars (the tank ignores fists), anim `PUNCH_T` 0.22 s (frame 0 for the first
+  0.1 s). Peds punch with `PED.FIST` (coordinator's numbers). Body hit radii `BULLET_R` ped 5 / cow 9 /
+  player 5; a rocket goes off on a body at +2 px. Round push = `BULLET_PUSH` 0.06 × velocity
+  (pellets 0.16). Blasts hurt peds/cows with the blast's `pr`/`player` numbers, throw them
+  250 × max(k, 0.25) px/s, toss corpses within 1.3 × pr, and set a survivor in the outer half
+  alight 35% of the time (`BLAST_IGNITE`). Fire hurts bodies at `fire.player`/s in 0.5 s pulses
+  (a ped catches fire on first touch; cows never burn). Gunshot alarm: 260 px, at most 1 per
+  shooter per 0.3 s, delivered `SHOT_REACT` 0.15 s late.
+- **Why:** the reaction delay stops the target fleeing before the round arrives: shotgun kills at
+  35 px went from 3/30 to 22/30. The 0.3 s throttle keeps Uzi fire from running an alarm every tick.
+- **Where:** `shoot`, `fireWeapon`, `punch`, `shotAlarm`, `updateBullets`/`bulletHits`,
+  `blastBodies`, `updateFires` in src/game.js.
+- **Status:** active
+
+## 2026-09-27 · Firing contract: `Game.fireWeapon(shooter, id, ang)` and `Game.punch(attacker, ang)`
+- **Decision:** `fireWeapon` spawns rounds, rockets and throws with muzzle, sound and alarm, but
+  no ammo, cooldown or input. Camera shake only for the player, and a ped's gun never clicks
+  empty. Every projectile carries `src`. A round never hits its `src`. The player's rounds (and
+  their tank's shells, `src.driver === player`) never hit the player or their car. A ped's rounds
+  hit the player on foot, the player's car, and other peds. `punch` picks the nearest body in the
+  cone (peds, cows, the player; never the attacker), else a car the fist touches (a ped fighting
+  the driver always reaches the player's car). Blasts take the owner as `explode(..., src)`, and an
+  unknown owner defaults to the player.
+- **Why:** peds.js (coordinator) calls both, and the player's `shoot` wraps `fireWeapon`.
+- **Status:** active
+
+## 2026-09-27 · Rejected: rebalancing the shotgun for peds
+- **Decision:** kept the v2 shotgun (6 × 7, ±0.22 rad) against 30 hp peds. It kills reliably up to
+  ~35 px and takes 2 blasts at 50–70 px. That matches "kills up close".
+- **Status:** active
+
 ## 2026-09-26 · A grenade bounce counts only above 30 px/s of impact
 - **Decision:** `bounced(q, hit)` gets the impact speed into the surface. Below 30 px/s it does
   nothing (no count, no sparks, no tink); sparks only above 60 px/s. A grenade hitting a car
@@ -62,4 +95,4 @@ Format and rules: `.claude/rules/decisions.md`. Newest first.
 
 ## 2026-09-25 · No weapons target people
 - **Decision:** there are no pedestrians (a project rule), so weapons affect only vehicles, props and the player.
-- **Status:** active until pedestrians are introduced
+- **Status:** superseded by 2026-09-27 · Weapons vs bodies (pedestrians and cows now exist; the user lifted the rule)

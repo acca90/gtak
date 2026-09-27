@@ -25,7 +25,12 @@ src/city.js      city generator: road segments, block merges, regions, river, ra
 src/render.js    chunked ground, oblique buildings, roofs, tall props, lighting
 src/entities.js  vehicle models (MODELS), weapons (WEAPONS), car physics, player, particles
 src/phone.js     cellphone UI (contacts, calls, messages, GPS, RADIO placeholder)
-src/missions.js  jobs from payphones and phone calls
+src/missions.js  jobs from payphones and phone calls (screenplay-agent)
+src/peds.js      pedestrians, cows, cops, carjacked drivers
+src/paint.js     paint shops
+src/gangs.js     the mobs: respect, war rule, turf (screenplay-agent)
+src/airport.js   flights and port cranes
+docs/story/      story bible: factions, characters, plot, mission scripts (screenplay-agent)
 src/game.js      rules, HUD, camera, main loop, Train, #demo test hook
 art/*.aseprite   sprite SOURCES (tags name the sprites)
 assets/          GENERATED sheets + atlas.js (never hand-edit)
@@ -37,7 +42,7 @@ tools/           generate-art.lua, export-art.lua, art.sh, check.js, shot.sh
 | Folder | What's in it |
 |---|---|
 | `.claude/rules/` | Project rules, loaded automatically. `scope`, `runtime`, `testing`, `agents`, `decisions` and `git` always apply; `art-pipeline` and `rendering` load when you touch those files. **Read them before changing code.** |
-| `.claude/agents/` | Six specialists (pixel, vehicles, weapons, geo, sound, radio). Ownership and the feature flow are in `rules/agents.md`. |
+| `.claude/agents/` | Seven specialists (pixel, vehicles, weapons, geo, sound, radio, screenplay). Ownership and the feature flow are in `rules/agents.md`. |
 | `.claude/agent-memory/` | Each agent's decision log (`<agent>/MEMORY.md`, auto-loaded into that agent) plus `coordinator/` for cross-cutting decisions. Format in `rules/decisions.md`. |
 | `.claude/skills/` | `/commit`: verify, then commit (and push when asked). |
 

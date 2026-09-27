@@ -49,7 +49,9 @@ function randomModel(R, maxLen = 999, weights) {
   return 'sedan';
 }
 
-// On-foot weapons (weapons-agent). `type` picks the mechanics in Game.fireWeapon:
+// On-foot weapons (weapons-agent). `type` picks the mechanics in Game.fireWeapon (the player's
+// `shoot` and armed peds share it; bullets carry `src`, the shooter, and never hurt it):
+//   fist    — Game.punch (player and peds; peds use PED.FIST's numbers)
 //   bullet  — one tracer round (dmg, spread, speed px/s, life s → range = speed × life)
 //   pellets — `pellets` rounds per shot, each ±spread rad, short life (range), `push` shoves cars
 //   rocket  — G.projectiles, flies at `speed` for `life` s, explodes on car/wall/timeout;
@@ -60,7 +62,9 @@ function randomModel(R, maxLen = 999, weights) {
 // `shop` = the gun store card: price $ per `pack` rounds, `max` carried, 0–5 stat bars, blurb.
 // Damage *dealt* lives here; damage *taken* (tank armour) is vehicles-agent's.
 const WEAPONS = {
-  fist:    { name: 'FISTS', icon: 'icon_fist' },
+  // fist: a punch lands on the nearest body (ped, cow, player) in a ±`arc` rad cone within `reach` px,
+  // else on a car the puncher touches (`car` dmg; the tank ignores it). `push` px/s shoves the body.
+  fist:    { name: 'FISTS', icon: 'icon_fist', type: 'fist', cool: 0.38, dmg: 8, reach: 13, arc: 1.0, push: 60, car: 1, shake: 1 },
   pistol:  { name: 'PISTOL', icon: 'icon_pistol', type: 'bullet', cool: 0.32, dmg: 9, spread: 0.03, speed: 560, life: 0.55, shake: 1, crate: 24,
     shop: { price: 200, pack: 24, max: 240, stats: { damage: 1, rate: 2, range: 4, area: 0 }, blurb: 'RELIABLE SIDEARM. CHEAP AMMO.' } },
   uzi:     { name: 'UZI', icon: 'icon_uzi', type: 'bullet', cool: 0.085, dmg: 5, spread: 0.09, speed: 560, life: 0.55, shake: 0.8, crate: 90,
@@ -441,6 +445,103 @@ const Physics = {
     }
   },
 
+  // Car vs pedestrians and cows (peds-v1 §2.2). A body is never a wall: the car keeps going.
+  // Speed into the body (at the contact point, spin included): peds < 40 px/s are pushed aside,
+  // 40-110 knocked down with (v - 40) x 0.5 damage, > 110 killed; cows > 60 killed, slower ones
+  // pushed (a cow counts as 0.4 of a sedan's mass, so the car loses a little speed). The tank
+  // kills anything above 20. One hit per contact (`p.carHit` / `carHitT`), except a ped lying in the
+  // road: the wheels roll over it once per car, ROLL_T s or more after the knock, for (v - 40) x 0.25
+  // (so a steady 40-90 px/s hit still leaves them alive; ~95+ is fatal with the roll). A corpse is just run over: one smear per corpse per car. Kills and knockdowns smear blood along the car's path and
+  // give the car ~2 s of red tyre prints (`c.bloodT`, laid in Game.carEffects).
+  BODY: { PUSH: 40, KILL: 110, COW_KILL: 60, TANK_KILL: 20, DMG: 0.5, COW_MASS: 0.4, PRINT_T: 2, CORPSE_PRINT_T: 1.2, ROLL_T: 0.35, ROLL_DMG: 0.25 },
+  _bc: [[0, 0, 0], [0, 0, 0]],
+  carVsBodies(c) {
+    if (!G.pedGrid || c.alt > 2) return;
+    const sp = c.speed();
+    if (sp < 2 && Math.abs(c.spin) < 0.2) return;   // standing still: walkers step around it (moveWalker)
+    const B = this.BODY, reach = c.len / 2 + 16, cs = c.circles(), bc = this._bc;
+    for (const p of G.pedGrid.near(c.x, c.y, c.len + 32)) {
+      if (p.gone || !(Math.abs(p.x - c.x) <= reach && Math.abs(p.y - c.y) <= reach)) continue;   // (NaN-safe)
+      const cow = p.kind === 'cow';
+      let nb = 1;
+      if (cow) {   // two circles along the body (~10 x 28 px)
+        const ax = Math.sin(p.ang) * 7, ay = -Math.cos(p.ang) * 7;
+        bc[0][0] = p.x + ax; bc[0][1] = p.y + ay; bc[0][2] = 6;
+        bc[1][0] = p.x - ax; bc[1][1] = p.y - ay; bc[1][2] = 6; nb = 2;
+      } else { bc[0][0] = p.x; bc[0][1] = p.y; bc[0][2] = PED.R; }
+      // deepest overlap between the car's circles and the body's
+      let over = 0, nx = 0, ny = 0, qx = 0, qy = 0;
+      for (const q of cs) for (let i = 0; i < nb; i++) {
+        const dx = bc[i][0] - q[0], dy = bc[i][1] - q[1], rr = c.hw + bc[i][2], d2 = dx * dx + dy * dy;
+        if (d2 >= rr * rr) continue;
+        const d = Math.sqrt(d2) || 0.01, o = rr - d;
+        if (o > over) { over = o; nx = dx / d; ny = dy / d; qx = q[0] + nx * c.hw; qy = q[1] + ny * c.hw; }
+      }
+      if (over <= 0) continue;
+      // velocity of the car at the contact point, and how fast it's going into the body
+      const pvx = c.vx - c.spin * (qy - c.y), pvy = c.vy + c.spin * (qx - c.x);
+      const vn = pvx * nx + pvy * ny, pv = Math.hypot(pvx, pvy) || 1;
+      const ux = pvx / pv, uy = pvy / pv;
+      if (p.dead) {   // run over a corpse: a smear, once per car
+        if (pv > 15 && !(p.runBy && p.runBy.includes(c))) {
+          (p.runBy || (p.runBy = [])).push(c);
+          Sound.body(p, pv, 'corpse');
+          if (!p.burnt) { Render.smear(p.x - ux * 3, p.y - uy * 3, p.x + ux * (cow ? 16 : 10), p.y + uy * (cow ? 16 : 10), cow ? 5 : 3); c.bloodT = Math.max(c.bloodT || 0, B.CORPSE_PRINT_T); }
+        }
+        continue;
+      }
+      const fresh = p.carHit !== c || G.t - p.carHitT > 0.3;
+      p.carHit = c; p.carHitT = G.t;
+      const kill = c.m.tank ? B.TANK_KILL : cow ? B.COW_KILL : B.KILL;
+      if (fresh && vn > kill) {
+        (p.runBy || (p.runBy = [])).push(c);
+        Sound.body(p, vn, 'kill');
+        const k = Math.min(1, 160 / pv);   // thrown along the car's path (Peds.kill caps the slide)
+        Peds.hurt(p, p.hp + 1, { kind: 'car', src: c, vx: pvx * k + nx * 20, vy: pvy * k + ny * 20 });
+        this.bodyBlood(c, p, ux, uy, vn, true);
+        if (cow) { const j = vn * B.COW_MASS * 0.5; this.impulse(c, -nx, -ny, j, qx, qy); }
+        continue;
+      }
+      if (!cow && fresh && vn > B.PUSH) {   // knocked down (can still die of the damage)
+        Sound.body(p, vn, 'down');
+        Peds.hurt(p, (vn - B.PUSH) * B.DMG, { kind: 'car', src: c, vx: ux * vn + nx * 15, vy: uy * vn + ny * 15 });
+        this.bodyBlood(c, p, ux, uy, vn, p.dead);
+        p.rollT = G.t;
+        continue;
+      }
+      if (!cow && p.state === 'down' && pv > B.PUSH) {   // lying in the road: the wheels roll over it (once per car)
+        if (p.rolledBy !== c && G.t - (p.rollT || -9) > B.ROLL_T) {
+          p.rollT = G.t; p.rolledBy = c;
+          Sound.body(p, pv, 'roll');
+          Peds.hurt(p, (pv - B.PUSH) * B.ROLL_DMG, { kind: 'car', src: c, vx: ux * (B.PUSH + 5), vy: uy * (B.PUSH + 5) });
+          this.bodyBlood(c, p, ux, uy, pv, p.dead);
+        }
+        continue;
+      }
+      if (cow) {
+        // perfectly inelastic along the normal: both end up at the common speed u
+        const M = c.m.mass, u = Math.max(0, vn) * M / (M + B.COW_MASS), kvn = p.vx * nx + p.vy * ny;
+        if (vn > kvn) {
+          p.vx += nx * (u - kvn); p.vy += ny * (u - kvn);
+          this.impulse(c, -nx, -ny, (vn - u) * M * 0.5, qx, qy);
+        }
+        p.x += nx * over; p.y += ny * over;
+        if (fresh && vn > 15) Sound.body(p, vn, 'bump');
+        if (fresh && vn > 15 && p.state !== 'charge') Peds.react(p, Peds.foeOf(c), 'car');   // stampede, or a bull charges
+      } else {
+        this.moveWalker(p, nx * over, ny * over, PED.R);
+        const foe = Peds.foeOf(c);   // a nudge from the player's car: they react (no damage, no alarm)
+        if (fresh && vn > 15 && foe && p.state !== 'down' && p.state !== 'fight') Peds.react(p, foe, 'car');
+      }
+    }
+  },
+  // blood where a car hit a body: a smear along its path, and red tyres for a while
+  bodyBlood(c, p, ux, uy, v, dead) {
+    const cow = p.kind === 'cow', L = dead ? 12 + Math.min(40, v * 0.2) : 8;   // ~ to where the body slides
+    Render.smear(p.x - ux * 2, p.y - uy * 2, p.x + ux * L, p.y + uy * L, dead ? (cow ? 7 : 5) : 3);
+    c.bloodT = this.BODY.PRINT_T;
+  },
+
   // circle-shaped walker vs everything
   moveWalker(p, dx, dy, r = 4) {
     const blocked = (x, y) =>
@@ -480,6 +581,12 @@ class Grid {
     const a = this.map.get(Math.floor(it.x / this.cell) + ',' + Math.floor(it.y / this.cell));
     if (a && a.includes(it)) a.splice(a.indexOf(it), 1);
   }
+  // put an item (back) in; move one with remove(it), change x/y, add(it)
+  add(it) {
+    const k = Math.floor(it.x / this.cell) + ',' + Math.floor(it.y / this.cell);
+    const a = this.map.get(k);
+    if (!a) this.map.set(k, [it]); else if (!a.includes(it)) a.push(it);
+  }
   near(x, y, reach = 0) {
     const out = [], cx = Math.floor(x / this.cell), cy = Math.floor(y / this.cell);
     const n = 1 + Math.ceil(reach / 2 / this.cell);
@@ -494,6 +601,21 @@ class Grid {
 // ----------------------------------------------------------- particles --
 const Parts = {
   list: [],
+  kinds: { spray: true },
+  // paint mist for the paint shop (paintshop-v1, pixel-agent): call every frame of the spray
+  // beat with the car's centre, heading and the paint ramp; soft tinted puffs + fine flecks.
+  spray(x, y, ang, ramp, n = 3) {
+    const fx = Math.sin(ang), fy = -Math.cos(ang);           // the car's nose direction
+    for (let i = 0; i < n; i++) {
+      const along = (Math.random() - 0.5) * 44, side = (Math.random() - 0.5) * 24;
+      const a = Math.random() * Math.PI * 2, s = 6 + Math.random() * 18;
+      const puff = Math.random() < 0.45;
+      this.add({ k: 'spray', x: x + fx * along - fy * side, y: y + fy * along + fx * side,
+        vx: Math.cos(a) * s * (puff ? 0.6 : 2.2), vy: Math.sin(a) * s * (puff ? 0.6 : 2.2) - (puff ? 4 : 0),
+        life: puff ? 0.7 + Math.random() * 0.5 : 0.35 + Math.random() * 0.3, puff,
+        color: puff ? ramp[Math.random() < 0.7 ? 1 : 0] : ramp[Math.random() < 0.5 ? 0 : 2] });
+    }
+  },
   add(p) { p.t = 0; this.list.push(p); if (this.list.length > 1200) this.list.shift(); return p; },
   smoke(x, y, dark) {
     this.add({ k: 'smoke', x: x + (Math.random() - 0.5) * 6, y: y + (Math.random() - 0.5) * 6,
@@ -539,6 +661,17 @@ const Parts = {
       } else if (p.k === 'expl') {
         const f = Assets.frame('fx', 'explode', Math.min(7, Math.floor(u * 8)));
         ctx.drawImage(fx.img, f * S, 0, S, S, x - S / 2 + p.ox, y - S / 2 + p.oy, S, S);
+      } else if (p.k === 'spray') {
+        if (p.puff) {                                           // a soft puff: the smoke frames tinted to the paint
+          const n = Assets.count('fx', 'smoke');
+          const f = Assets.frame('fx', 'smoke', Math.min(n - 1, Math.floor(u * n)));
+          ctx.globalAlpha = 0.42 * (1 - u);
+          ctx.drawImage(Assets.tinted('fx', p.color), f * S, 0, S, S, x - S / 2, y - S / 2, S, S);
+          ctx.globalAlpha = 1;
+        } else {                                                // a fleck of paint
+          ctx.fillStyle = p.color;
+          ctx.fillRect(x, y, u < 0.5 ? 2 : 1, u < 0.5 ? 2 : 1);
+        }
       } else if (p.k === 'spark' || p.k === 'debris') {
         ctx.fillStyle = p.color;
         const s = p.k === 'debris' ? 2 : 1;

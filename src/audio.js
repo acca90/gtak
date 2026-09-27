@@ -15,10 +15,11 @@
 // How the game drives it:
 //   Sound.update(dt)  once per game tick, also on the title and while paused. Continuous sounds
 //                     (engines, skids, horns, sirens, fire, hydrant spray, train, payphone,
-//                     cellphone, ambience) are read from game state here and need no hooks.
+//                     cellphone, people's voices, cows, planes, cranes, ambience) are read from
+//                     game state here and need no hooks.
 //                     Loops are "wanted" each tick; anything not wanted is faded out and stopped.
-//   one-line hooks    Sound.play / ui / shot / explode / impact / breakProp / door / pickup
-//                     at events in game.js and missions.js.
+//   one-line hooks    Sound.play / ui / shot / explode / impact / breakProp / door / pickup /
+//                     punch / body at events in game.js, entities.js, peds.js and missions.js.
 // soundboard.html lists every sound (Sound.catalog) for review and tuning.
 
 const SND_STORE = 'pastelcity.sound';
@@ -78,7 +79,101 @@ const SND_HORNS = {
 // max simultaneous loops per type (nearest win; the player's vehicle always first)
 // weapon id → its firing sound (Sound.shot)
 const SND_SHOT = { pistol: 'pistol', uzi: 'uzi', shotgun: 'shotgun', bazooka: 'bazooka', grenade: 'throwPin', molotov: 'throw' };
-const SND_MAX = { engine: 5, skid: 3, horn: 3, siren: 3, fire: 3, scrape: 2, spray: 2, rocket: 4, patch: 3 };
+const SND_MAX = { engine: 5, skid: 3, horn: 3, siren: 3, fire: 3, scrape: 2, spray: 2, rocket: 4, patch: 3, burn: 2, plane: 2 };
+
+// Voices for people (Sound.vox): vowels as three formants [Hz, Q, gain]. A speaker is { f0 (speaking
+// pitch, Hz), fm (formant scale: vocal tract size) }; screams sit ~2.3-3x above f0, and everything
+// is low-passed ≤ 3.2 kHz so a crowd never gets shrill.
+const SND_VOWEL = {
+  ah: [[800, 6, 1], [1200, 7, 0.6], [2600, 9, 0.22]],
+  eh: [[550, 6, 1], [1800, 8, 0.55], [2600, 9, 0.25]],
+  ee: [[320, 6, 1], [2250, 9, 0.5], [3000, 9, 0.2]],
+  uh: [[620, 6, 1], [1050, 7, 0.5], [2400, 9, 0.15]],
+  oh: [[480, 6, 1], [850, 7, 0.5], [2400, 9, 0.1]],
+  nn: [[300, 5, 1], [1050, 6, 0.15], [2300, 8, 0.05]],   // the nasal end of "come ON"
+};
+function sndVoice() {
+  return Math.random() < 0.5
+    ? { f0: sndRand(92, 140), fm: sndRand(0.9, 1.02) }     // lower voices
+    : { f0: sndRand(180, 245), fm: sndRand(1.07, 1.2) };   // higher voices
+}
+const SND_PLAYER_VOICE = { f0: 112, fm: 0.97 };
+// cops (peds with mood 'cop'): a low, steady bark voice
+const sndCopVoice = () => ({ f0: sndRand(86, 112), fm: sndRand(0.9, 0.98), cop: true });
+// cop lines as syllables: [dur s, pitch ×, vowel, end pitch × (fall), plosive onset]; pitch 0 = a gap
+const SND_COP_SAYS = {
+  'POLICE! FREEZE!': [[0.08, 1, 'uh', 1, 1], [0.2, 1.2, 'ee', 1.05], [0.09, 0], [0.3, 1.28, 'ee', 0.82, 1]],
+  'DROP IT!': [[0.2, 1.22, 'ah', 1.05, 1], [0.15, 1.02, 'ee', 0.78, 1]],
+  'SHOTS FIRED!': [[0.2, 1.15, 'ah', 1.05, 1], [0.04, 0], [0.14, 1.22, 'ah', 1.1, 1], [0.2, 1.02, 'eh', 0.78]],
+  "YOU'RE UNDER ARREST!": [[0.1, 1, 'oh', 1], [0.08, 1.05, 'uh'], [0.08, 1, 'eh'], [0.07, 1, 'uh'], [0.26, 1.26, 'eh', 0.82, 1]],
+  'OFFICER DOWN!': [[0.1, 1.12, 'ah', 1.05], [0.08, 1.05, 'ee', 1, 1], [0.08, 1, 'eh'], [0.32, 1.22, 'ah', 0.8, 1]],
+  'LOST HIM.': [[0.18, 0.96, 'ah', 0.9, 1], [0.2, 0.92, 'ee', 0.74]],
+};
+const SND_COP_DEFAULT = [[0.12, 1.1, 'ah', 1, 1], [0.1, 1.05, 'eh'], [0.22, 1.18, 'uh', 0.8, 1]];
+// mob members (peds with mood 'gang', docs/specs/gangs-v1.md G5): one voice family per mob.
+// f0/fm ranges; g = level (also scales their ouch/scream/growl); len = syllable length ×; swing = how far
+// the pitch moves (1 = neutral); hold = syllable sustain (high = clipped, hard stops); gap between
+// syllables; a = onset; lp/hp band; rough = rasp; breath = air; fall = the pitch drop at a phrase end.
+const SND_MOB = {
+  moretti: { f0: [100, 128], fm: [0.94, 1.0], g: 1.0, len: 1.12, swing: 1.45, hold: 0.5, gap: 0.008, a: 0.012, lp: 2400, hp: 140, rough: [30, 0.12], breath: 0.08, fall: 0.8, vib: [5.5, 0.025] },
+  orlov: { f0: [72, 90], fm: [0.86, 0.92], g: 0.95, len: 0.78, swing: 0.45, hold: 0.8, gap: 0.045, a: 0.006, lp: 2200, hp: 110, rough: [26, 0.35], breath: 0.05, fall: 0.74 },
+  orchid: { f0: [118, 150], fm: [1.0, 1.08], g: 0.6, len: 0.95, swing: 0.75, hold: 0.62, gap: 0.02, a: 0.03, lp: 2900, hp: 280, rough: null, breath: 0.4, fall: 0.86 },
+};
+const sndMobVoice = (id) => { const s = SND_MOB[id] || SND_MOB.moretti; return { f0: sndRand(s.f0[0], s.f0[1]), fm: sndRand(s.fm[0], s.fm[1]), g: s.g, mob: SND_MOB[id] ? id : 'moretti' }; };
+// a bubble's text → syllables [dur, pitch ×, vowel, end ×, plosive] (0 pitch = a pause), in a mob's style.
+// Rough English: vowel groups per word (a silent final E dropped), stress on each word's first syllable,
+// the phrase drifts down; '!' lifts and drops the last syllable, '?' rises, '.' falls; a mid '.' or ',' pauses.
+// the bubbles in peds.js GANG_SAYS (+ a violent ped's), for the soundboard; the game passes the live bubble text
+const GANG_SAYS_SND = {
+  moretti: ['THIS IS MORETTI TURF!', 'YOU LOST, PAL?', 'HEY! FAMILY BUSINESS!', 'WANNA GO?'],
+  orlov: ['WRONG STREET, FRIEND.', 'YOU ARE LATE. FOR YOUR FUNERAL.', 'ORLOV SAYS HELLO.', 'COME ON!'],
+  orchid: ['NOT WELCOME HERE.', 'THE ORCHID SEES YOU.', 'BAD MOVE.', 'YOU WANT SOME?'],
+};
+const SND_MOB_VW = { A: 'ah', E: 'eh', I: 'ee', O: 'oh', U: 'uh', Y: 'ee' };
+const sndMobSylCache = new Map();
+function sndMobSyl(text, mob) {
+  const key = mob + '|' + text;
+  let out = sndMobSylCache.get(key);
+  if (out) return out;
+  const st = SND_MOB[mob] || SND_MOB.moretti, words = String(text).toUpperCase().split(/\s+/).filter(Boolean);
+  const parts = words.map((w) => {
+    const clean = w.replace(/[^A-Z']/g, ''), punct = w.replace(/[A-Z']/g, '');
+    let g = clean.match(/[AEIOUY]+/g) || ['U'];
+    if (g.length > 1 && /[^AEIOUY]E$/.test(clean)) g = g.slice(0, -1);
+    return { g: g.slice(0, 3), pl: /^[PTKBDGC]/.test(clean), punct };
+  });
+  let n = parts.reduce((s, p) => s + p.g.length, 0);
+  if (n > 10) for (const p of parts.slice(0, -1)) { n -= p.g.length - 1; p.g = p.g.slice(0, 1); }
+  out = [];
+  let i = 0;
+  parts.forEach((p, wi) => {
+    const lastW = wi === parts.length - 1, bang = p.punct.includes('!'), ask = p.punct.includes('?'), stop = /[.,]/.test(p.punct);
+    p.g.forEach((grp, si) => {
+      const last = si === p.g.length - 1;
+      let raw = 1.1 - 0.14 * (i / Math.max(1, n - 1)) + (si === 0 ? 0.06 : 0) + (bang && last ? 0.14 : 0);
+      let d = (0.092 + (si === 0 ? 0.018 : 0) + (last ? 0.025 : 0)) * st.len, end = 1;
+      if (last && (bang || ask || stop || lastW)) { d *= lastW ? 1.9 : 1.4; end = ask ? 1.25 : st.fall; }
+      out.push([d, 1 + (raw - 1) * st.swing, SND_MOB_VW[grp[0]] || 'uh', 1 + (end - 1) * Math.min(1.2, st.swing + 0.4), si === 0 && p.pl ? 1 : 0]);
+      i++;
+    });
+    if (!lastW && (stop || bang || ask)) out.push([0.13 * st.len, 0]);
+  });
+  sndMobSylCache.set(key, out);
+  return out;
+}
+// a cow's moo: pitch factor p, length d, contour shape [start, peak, end] × f, rasp 0..1
+function sndMoo(S, out, t, p, d, shape, rasp) {
+  const f = 115 * p;
+  const o = S.osc('sawtooth', f), f1 = S.filt('bandpass', 380 * (0.8 + 0.2 * p), 3), f2 = S.filt('bandpass', 950 * (0.8 + 0.2 * p), 4), g = S.gain(0), g2 = S.gain(0.5);
+  o.frequency.setValueAtTime(f * shape[0], t); o.frequency.linearRampToValueAtTime(f * shape[1], t + d * 0.35); o.frequency.linearRampToValueAtTime(f * shape[2], t + d * 0.85);
+  const vib = S.osc('sine', 5), vg = S.gain(3 * p); vib.connect(vg); vg.connect(o.frequency);
+  S.env(g.gain, t, 0.12, 1.6, d * 0.5, d * 0.93);
+  let tail = g;
+  if (rasp) { const am = S.gain(1 - rasp * 0.5), l = S.osc('square', 31), lg = S.gain(rasp * 0.5); l.connect(lg); lg.connect(am.gain); g.connect(am); tail = am; l.start(t); l.stop(t + d); }
+  o.connect(f1); o.connect(f2); f1.connect(g); f2.connect(g2); g2.connect(g); tail.connect(out);
+  o.start(t); vib.start(t); o.stop(t + d); vib.stop(t + d);
+  return d;
+}
 
 // ------------------------------------------------------------ sequencer --
 // For patterned loops (ringtones, bells): calls step(t, dur, arg) for every step that falls in
@@ -212,6 +307,20 @@ const SND_LOOPS = {
     v.set = (amt) => { const now = S.ctx.currentTime; g.gain.setTargetAtTime(0.9 * amt, now, 0.2); g2.gain.setTargetAtTime(0.7 * amt, now, 0.2); };
   } },
 
+  // paint shop respray: an air compressor chugging and the aerosol hiss sweeping over the car. set(t) = s left
+  paintSpray: { vol: 0.4, attack: 0.08, release: 0.12, make(S, v) {
+    const s = S.src(false), hp = S.filt('highpass', 3200, 0.7), lp = S.filt('lowpass', 9000, 0.7), g = S.gain(0.55);
+    const sw = S.osc('sine', 1.7), swg = S.gain(0.3);   // the gun passing back and forth
+    sw.connect(swg); swg.connect(g.gain);
+    const hg = S.gain(1);
+    s.connect(hp); hp.connect(lp); lp.connect(g); g.connect(hg); hg.connect(v.out);
+    const b = S.src(true), blp = S.filt('lowpass', 260, 1), bg = S.gain(0.5), pump = S.osc('square', 13), pg = S.gain(0.4);   // compressor piston
+    pump.connect(pg); pg.connect(bg.gain);
+    const hum = S.osc('sawtooth', 58), hlp = S.filt('lowpass', 220, 1), humg = S.gain(0.1);
+    b.connect(blp); blp.connect(bg); bg.connect(v.out); hum.connect(hlp); hlp.connect(humg); humg.connect(v.out);
+    S.start(v, s); S.start(v, sw); S.start(v, b); S.start(v, pump); S.start(v, hum);
+    v.set = (left) => { hg.gain.setTargetAtTime(sndClamp((left ?? 1) / 0.15, 0, 1), S.ctx.currentTime, 0.03); };   // the trigger lets go at the end
+  } },
   servo: { vol: 0.14, attack: 0.03, release: 0.06, make(S, v) {
     const o = S.osc('square', 150), lp = S.filt('lowpass', 900, 3), o2 = S.osc('sine', 460), g2 = S.gain(0.3);
     o.connect(lp); lp.connect(v.out); o2.connect(g2); g2.connect(v.out);
@@ -277,6 +386,104 @@ const SND_LOOPS = {
     const o1 = S.osc('sine', 400), o2 = S.osc('sine', 450), gate = S.gain(0);
     o1.connect(gate); o2.connect(gate); gate.connect(v.out); S.start(v, o1); S.start(v, o2);
     v.set = sndSeq(S, v, [[0.6, 0.4], [2, 0.4]], (t, d, on) => sndGate(gate.gain, t, on));
+  } },
+
+  // --- people and animals
+  // a ped on fire: wavering screams in breathless phrases, until it drops (arg = the ped's voice)
+  burnScream: { vol: 0.38, attack: 0.04, release: 0.2, make(S, v, voice) {
+    const vc = voice || sndVoice();
+    v.next = S.ctx.currentTime + 0.02;
+    v.set = () => {
+      const now = S.ctx.currentTime;
+      if (v.next < now) v.next = now + 0.02;
+      while (v.next < now + (v.look || 0.25)) {
+        const d = sndRand(0.55, 1.1), f = vc.f0 * sndRand(2.3, 3), w = sndRand(0.9, 1.15);
+        S.vox(v.out, v.next, { f: [[0, f * 0.8], [d * 0.3, f * 1.1 * w], [d * 0.65, f * 0.92], [d, f * 0.72]], dur: d, a: 0.05, hold: d * 0.45, gain: 0.8,
+          vowel: SND_VOWEL.ah, vowel2: Math.random() < 0.5 ? SND_VOWEL.oh : null, fm: vc.fm, vib: [sndRand(7, 10), f * 0.06], breath: 0.35 });
+        v.next += d + sndRand(0.08, 0.25);   // a gasp between cries
+      }
+    };
+  } },
+  // stampeding herd / a charging bull: hoof beats over a ground rumble; set(n bodies running, heavy)
+  hooves: { vol: 0.5, attack: 0.1, release: 0.4, range: 1.2, make(S, v) {
+    const s = S.src(true), lp = S.filt('lowpass', 150, 0.7), g = S.gain(0);
+    s.connect(lp); lp.connect(g); g.connect(v.out); S.start(v, s);
+    v.next = S.ctx.currentTime + 0.02;
+    v.set = (n, heavy) => {
+      const now = S.ctx.currentTime, rate = Math.min(26, 5 + 4 * n);
+      g.gain.setTargetAtTime(Math.min(1, 0.2 * n), now, 0.2);
+      if (v.next < now) v.next = now + 0.01;
+      while (v.next < now + (v.look || 0.2)) {
+        const k = sndRand(0.5, 1) * (heavy ? 1.2 : 1);
+        S.tone(v.out, v.next, { f: sndRand(70, 95), f1: 40, dur: 0.07, gain: 0.55 * k });
+        S.noise(v.out, v.next, { type: 'lowpass', f: sndRand(500, 900), dur: 0.04, gain: 0.5 * k });
+        v.next += sndRand(0.4, 1.6) / rate;
+      }
+    };
+  } },
+
+  // --- airport and port
+  // airliner: fan roar + exhaust hiss + turbine whine; set(spool 0 idle..1 take-off, rev 0/1, near 0..1).
+  // `near` (the distance gain) dulls it far away: the whine goes first, the roar carries.
+  jet: { vol: 0.5, attack: 0.6, release: 1.2, tau: 0.25, range: 3, make(S, v) {
+    const fl = S.filt('lowpass', 6000, 0.7);
+    fl.connect(v.out);
+    const r = S.src(true), rl = S.filt('lowpass', 300, 0.8), rg = S.gain(0);
+    const h = S.src(false), hb = S.filt('bandpass', 1200, 0.8), hg = S.gain(0);
+    const w1 = S.osc('sine', 1600), w2 = S.osc('sine', 1600 * 1.498), wg = S.gain(0), w2g = S.gain(0.5);
+    const b = S.osc('sawtooth', 50), bl = S.filt('lowpass', 180, 1), bg = S.gain(0);
+    r.connect(rl); rl.connect(rg); rg.connect(fl);
+    h.connect(hb); hb.connect(hg); hg.connect(fl);
+    w1.connect(wg); w2.connect(w2g); w2g.connect(wg); wg.connect(fl);
+    b.connect(bl); bl.connect(bg); bg.connect(fl);
+    for (const n of [r, h, w1, w2, b]) S.start(v, n);
+    v.set = (spool, rev, near) => {
+      const now = S.ctx.currentTime, T = 0.7, k = Math.max(spool, 0.9 * rev), wf = 1500 + 2500 * spool;
+      rl.frequency.setTargetAtTime(220 + 1200 * k, now, T);
+      rg.gain.setTargetAtTime(0.3 + 1.2 * k * k, now, T);
+      hb.frequency.setTargetAtTime(900 + 1300 * k, now, T);
+      hg.gain.setTargetAtTime(0.06 + 0.3 * k + 0.35 * rev, now, T);
+      w1.frequency.setTargetAtTime(wf, now, T); w2.frequency.setTargetAtTime(wf * 1.498, now, T);
+      wg.gain.setTargetAtTime(0.07 * (1 - 0.4 * rev) * near * near, now, T);
+      b.frequency.setTargetAtTime(40 + 60 * k, now, T); bg.gain.setTargetAtTime(0.12 + 0.25 * k, now, T);
+      fl.frequency.setTargetAtTime(700 + 8000 * near * near, now, 0.3);
+    };
+  } },
+  // prop plane: a buzzy piston engine and the propeller's blade-pass thrum; same set() as the jet
+  prop: { vol: 0.45, attack: 0.5, release: 1, tau: 0.25, range: 2.2, make(S, v) {
+    const fl = S.filt('lowpass', 6000, 0.7);
+    fl.connect(v.out);
+    const o1 = S.osc('sawtooth', 40), o2 = S.osc('square', 20), ol = S.filt('lowpass', 500, 2), og = S.gain(0), o2g = S.gain(0.4);
+    const ns = S.src(false), nb = S.filt('bandpass', 600, 0.8), am = S.gain(0.5), lfo = S.osc('sawtooth', 30), lg = S.gain(0.5), ng = S.gain(0);
+    o1.connect(ol); o2.connect(o2g); o2g.connect(ol); ol.connect(og); og.connect(fl);
+    lfo.connect(lg); lg.connect(am.gain); ns.connect(nb); nb.connect(am); am.connect(ng); ng.connect(fl);
+    for (const n of [o1, o2, ns, lfo]) S.start(v, n);
+    v.set = (spool, rev, near) => {
+      const now = S.ctx.currentTime, T = 0.6, k = Math.max(spool, 0.8 * rev), f = 32 + 70 * k;
+      o1.frequency.setTargetAtTime(f, now, T); o2.frequency.setTargetAtTime(f * 0.5, now, T);
+      lfo.frequency.setTargetAtTime(f * 0.75, now, T);
+      ol.frequency.setTargetAtTime(350 + 1300 * k, now, T);
+      og.gain.setTargetAtTime(0.35 + 0.25 * k, now, T);
+      nb.frequency.setTargetAtTime(500 + 700 * k + 400 * rev, now, T);
+      ng.gain.setTargetAtTime(0.2 + 0.6 * k + 0.4 * rev, now, T);
+      fl.frequency.setTargetAtTime(600 + 7000 * near * near, now, 0.3);
+    };
+  } },
+  // gantry crane drives: electric motor hum + gear whine + cable hiss; set(amount 0..1, hoisting)
+  craneMotor: { bus: 'amb', vol: 0.4, attack: 0.15, release: 0.3, tau: 0.15, range: 1.4, make(S, v) {
+    const o = S.osc('sawtooth', 50), ol = S.filt('lowpass', 260, 2), og = S.gain(0);
+    const w = S.osc('triangle', 300), wg = S.gain(0);
+    const n = S.src(false), nb = S.filt('bandpass', 900, 3), ng = S.gain(0);
+    o.connect(ol); ol.connect(og); og.connect(v.out); w.connect(wg); wg.connect(v.out); n.connect(nb); nb.connect(ng); ng.connect(v.out);
+    for (const x of [o, w, n]) S.start(v, x);
+    v.set = (amt, hoist) => {
+      const now = S.ctx.currentTime;
+      og.gain.setTargetAtTime(0.6 * Math.min(1, amt * 1.5), now, 0.12);
+      w.frequency.setTargetAtTime(240 + 480 * amt + (hoist ? 140 : 0), now, 0.15);
+      wg.gain.setTargetAtTime(0.14 * amt, now, 0.12);
+      nb.frequency.setTargetAtTime(hoist ? 1300 : 800, now, 0.2);
+      ng.gain.setTargetAtTime(0.35 * amt, now, 0.12);
+    };
   } },
 
   // --- ambience beds (amb bus, non-positional, slow crossfades)
@@ -557,20 +764,219 @@ const SND_SFX = {
     for (const [f, g] of [[65, 0.5], [97.5, 0.35], [130, 0.2]]) S.tone(out, t, { type: 'sawtooth', f, a: 0.3, hold: 2.4, dur: 4, gain: g, lp: 350 });
     return 4;
   } },
-  jet: { bus: 'amb', limit: 1, vol: 0.4, fn(S, out, t) { // a distant airliner swelling past
-    S.noise(out, t, { type: 'lowpass', brown: true, f: 250, f1: 500, glide: 3, a: 3, dur: 7, gain: 1 });
-    S.noise(out, t, { type: 'bandpass', f: 2000, q: 1, a: 3, dur: 6, gain: 0.08 });
-    return 7;
+  moo: { bus: 'amb', limit: 2, vol: 0.5, range: 1.2, fn(S, out, t, o) { // a grazing cow (o.bull: deeper)
+    return sndMoo(S, out, t, o.bull ? sndRand(0.68, 0.78) : sndRand(0.8, 1.2), 1.5, [0.9, 1.2, 0.85], o.bull ? 0.25 : 0);
   } },
-  moo: { bus: 'amb', limit: 2, vol: 0.5, range: 1.2, fn(S, out, t) {
-    const p = sndRand(0.8, 1.2), f = 115 * p;
-    const o = S.osc('sawtooth', f), f1 = S.filt('bandpass', 380, 3), f2 = S.filt('bandpass', 950, 4), g = S.gain(0), g2 = S.gain(0.5);
-    o.frequency.setValueAtTime(f * 0.9, t); o.frequency.linearRampToValueAtTime(f * 1.2, t + 0.5); o.frequency.linearRampToValueAtTime(f * 0.85, t + 1.3);
-    const vib = S.osc('sine', 5), vg = S.gain(3); vib.connect(vg); vg.connect(o.frequency);
-    S.env(g.gain, t, 0.15, 1.6, 0.8, 1.4);
-    o.connect(f1); o.connect(f2); f1.connect(g); f2.connect(g2); g2.connect(g); g.connect(out);
-    o.start(t); vib.start(t); o.stop(t + 1.5); vib.stop(t + 1.5);
-    return 1.5;
+  craneClank: { bus: 'amb', limit: 3, vol: 0.45, range: 1.6, fn(S, out, t) { // a container locks on / sets down
+    const k = sndRand(0.9, 1.1);
+    for (const [f, g, d] of [[260, 3, 0.9], [690, 2, 0.6], [1340, 1.2, 0.4]]) S.noise(out, t, { type: 'bandpass', f: f * k, q: 18, dur: d, gain: g });
+    S.tone(out, t, { f: 62, f1: 38, dur: 0.22, gain: 0.8 });
+    S.noise(out, t, { type: 'lowpass', f: 600, dur: 0.08, gain: 0.8 });
+    S.noise(out, t + 0.11, { type: 'bandpass', f: 1900 * k, q: 6, dur: 0.05, gain: 0.8 });   // the twist-locks
+    return 0.95;
+  } },
+
+  // --- people (o.v = the speaker's voice, from Sound.people; random without one)
+  scream: { limit: 3, vol: 0.4, fn(S, out, t, o) { // scared: starts fleeing, or badly hurt (o.short: a yelp)
+    const v = o.v || sndVoice(), f = v.f0 * sndRand(2.3, 2.9), d = o.short ? sndRand(0.3, 0.42) : sndRand(0.6, 1);
+    S.vox(out, t, { f: [[0, f * 0.75], [0.1, f * 1.08], [d * 0.7, f], [d, f * 0.72]], dur: d, a: 0.04, hold: d * 0.4, gain: 0.8 * (v.g || 1),
+      vowel: SND_VOWEL.ah, vowel2: o.short ? null : SND_VOWEL.eh, fm: v.fm, vib: [sndRand(5.5, 7.5), f * 0.025], breath: 0.25 });
+    return d;
+  } },
+  ouch: { limit: 3, vol: 0.4, fn(S, out, t, o) { // hurt (o.death: the last breath)
+    const v = o.v || sndVoice(), f = v.f0 * 1.6;
+    if (o.death) {
+      S.vox(out, t, { f: [[0, f * 1.4], [0.08, f * 1.5], [0.5, f * 0.55]], dur: 0.5, a: 0.02, hold: 0.12, gain: 0.8 * (v.g || 1), vowel: SND_VOWEL.ah, vowel2: SND_VOWEL.uh, fm: v.fm, breath: 0.45, rough: [40, 0.35] });
+      return 0.5;
+    }
+    const d = sndRand(0.16, 0.24);
+    S.vox(out, t, { f: [[0, f], [0.04, f * 1.25], [d, f * 0.75]], dur: d, a: 0.01, hold: 0.04, gain: 0.8 * (v.g || 1), vowel: SND_VOWEL.uh, fm: v.fm, breath: 0.3 });
+    return d;
+  } },
+  hey: { limit: 2, vol: 0.4, fn(S, out, t, o) { // angry: a shouted "HEY!" (o.low: a violent one's "huh?")
+    const v = o.v || sndVoice(), f = v.f0 * (o.low ? 1.1 : 1.5), d = o.low ? 0.26 : 0.22;
+    S.noise(out, t, { type: 'bandpass', f: 1800 * v.fm, q: 1, dur: 0.05, gain: 0.3 });
+    S.vox(out, t + 0.03, { f: o.low ? [[0, f * 0.9], [d, f * 1.2]] : [[0, f], [0.07, f * 1.3], [d, f * 1.05]], dur: d, a: 0.015, hold: d * 0.4, gain: 0.8 * (v.g || 1),
+      vowel: o.low ? SND_VOWEL.uh : SND_VOWEL.eh, vowel2: o.low ? SND_VOWEL.ah : SND_VOWEL.ee, fm: v.fm, rough: o.low ? [36, 0.4] : o.rough ? [38, 0.5] : null });
+    return d + 0.05;
+  } },
+  growl: { limit: 2, vol: 0.5, fn(S, out, t, o) { // violent: "come ON!" as a fight starts
+    const v = o.v || sndVoice(), f = v.f0;
+    S.noise(out, t, { type: 'bandpass', f: 2200, q: 2, dur: 0.025, gain: 0.5 });
+    S.vox(out, t + 0.02, { f: [[0, f * 1.15], [0.12, f * 1.05]], dur: 0.12, a: 0.01, hold: 0.04, gain: 0.7 * (v.g || 1), vowel: SND_VOWEL.uh, fm: v.fm, rough: [38, 0.6] });
+    S.vox(out, t + 0.18, { f: [[0, f * 1.3], [0.1, f * 1.45], [0.42, f * 0.95]], dur: 0.42, a: 0.02, hold: 0.15, gain: 0.8 * (v.g || 1), vowel: SND_VOWEL.oh, vowel2: SND_VOWEL.nn, fm: v.fm, rough: [34, 0.7] });
+    return 0.62;
+  } },
+  grunt: { limit: 2, vol: 0.45, fn(S, out, t) { // the player gets hurt
+    const v = SND_PLAYER_VOICE, f = v.f0 * sndRand(1.15, 1.35), d = sndRand(0.18, 0.24);
+    S.noise(out, t, { type: 'bandpass', f: 1500, q: 1, dur: 0.04, gain: 0.25 });
+    S.vox(out, t + 0.01, { f: [[0, f], [0.04, f * 1.08], [d, f * 0.68]], dur: d, a: 0.01, hold: 0.05, gain: 0.85, vowel: SND_VOWEL.uh, fm: v.fm, rough: [45, 0.5], breath: 0.3 });
+    return d;
+  } },
+  // a cop's shouted line (o.text = its bubble, o.v its voice), clipped and a little radio-band.
+  // o.radio: 'down' = keyed into the shoulder radio (squelch + chirp first), 'lost' = quieter, a roger beep after
+  copBark: { limit: 2, vol: 0.5, fn(S, out, t, o) {
+    const v = o.v || sndCopVoice(), R = o.radio, syl = SND_COP_SAYS[o.text] || SND_COP_DEFAULT;
+    const hp = S.filt('highpass', R === 'down' ? 480 : 330, 0.7), g = S.gain(R === 'lost' ? 0.6 : 1);
+    hp.connect(g); g.connect(out);
+    let at = t;
+    if (R === 'down') {
+      S.noise(out, t, { type: 'bandpass', f: 2200, q: 0.6, a: 0.005, hold: 0.07, dur: 0.12, gain: 0.35 });   // squelch opens
+      S.tone(out, t + 0.12, { type: 'square', f: 1750, f1: 2350, glide: 0.04, dur: 0.06, gain: 0.12, lp: 4000 });   // talk-permit chirp
+      at = t + 0.2;
+    }
+    for (const [d, m, vw, end, pl] of syl) {
+      if (m) {
+        const f = v.f0 * 1.45 * m;
+        if (pl) S.noise(hp, at, { type: 'bandpass', f: 2600 * v.fm, q: 1.4, dur: 0.02, gain: 0.45 });
+        S.vox(hp, at + (pl ? 0.012 : 0), { f: [[0, f], [d * 0.3, f * 1.04], [d, f * (end || 1)]], dur: d, a: 0.008, hold: d * 0.45, gain: 0.85,
+          vowel: SND_VOWEL[vw], fm: v.fm, rough: [42, 0.25], lp: R === 'down' ? 2300 : 2800 });
+      }
+      at += d + 0.015;
+    }
+    if (R === 'down') S.noise(out, at + 0.02, { type: 'bandpass', f: 2000, q: 0.6, a: 0.004, dur: 0.1, gain: 0.3 });   // squelch tail
+    if (R === 'lost') {   // roger beep, a breath of static
+      S.tone(out, at + 0.08, { f: 1400, dur: 0.05, gain: 0.1 });
+      S.tone(out, at + 0.14, { f: 1050, dur: 0.06, gain: 0.1 });
+      S.noise(out, at + 0.2, { type: 'bandpass', f: 2000, q: 0.6, a: 0.004, dur: 0.07, gain: 0.15 });
+      at += 0.28;
+    }
+    return at - t + 0.15;
+  } },
+  // a mob member's shouted line (o.text = its bubble, o.v its voice from sndMobVoice, or o.mob for a fresh one)
+  mobBark: { limit: 2, vol: 0.5, fn(S, out, t, o) {
+    const v = o.v && o.v.mob ? o.v : sndMobVoice(o.mob), st = SND_MOB[v.mob], syl = sndMobSyl(o.text || 'HEY!', v.mob);
+    const hp = S.filt('highpass', st.hp, 0.7), g = S.gain(v.g);
+    hp.connect(g); g.connect(out);
+    let at = t;
+    syl.forEach(([d, m, vw, end, pl], i) => {
+      if (m) {
+        const f = v.f0 * 1.4 * m, lastS = i === syl.length - 1;
+        if (pl) S.noise(hp, at, { type: 'bandpass', f: 2400 * v.fm, q: 1.4, dur: 0.018, gain: 0.35 });
+        S.vox(hp, at + (pl ? 0.01 : 0), { f: [[0, f], [d * 0.3, f * (1 + 0.04 * st.swing)], [d, f * end]], dur: d, a: st.a, hold: d * st.hold, gain: 0.85,
+          vowel: SND_VOWEL[vw], fm: v.fm, rough: st.rough, breath: st.breath, lp: st.lp, vib: lastS && st.vib ? [st.vib[0], f * st.vib[1]] : null });
+      }
+      at += d + st.gap;
+    });
+    return at - t + 0.12;
+  } },
+  // respect changed with a mob (Gangs.onChange; ui bus): two notes up or down in the mob's colour
+  // (o.mob; Moretti a plucked triangle, Orlov a low square, Orchid a sine bell). o.up; o.band: crossed
+  // into a better band (a third note). respectKos: the band fell to kill-on-sight.
+  respect: { bus: 'ui', limit: 2, vol: 0.4, fn(S, out, t, o) {
+    const c = { moretti: ['triangle', 69, 2400], orlov: ['square', 57, 1400], orchid: ['sine', 76, 5000] }[o.mob] || ['triangle', 69, 2400];
+    const [type, base, lp] = c, ms = o.up ? (o.mob === 'orchid' ? [0, 7] : [0, 5]) : (o.mob === 'orchid' ? [5, 0] : [3, 0]);
+    const gain = type === 'square' ? 0.32 : 0.5, bell = type === 'sine';
+    ms.forEach((m, i) => {
+      const f = mtof(base + m + (o.up ? 0 : -2));
+      S.tone(out, t + i * 0.085, { type, f, dur: bell ? 0.32 : 0.14, hold: bell ? 0 : 0.03, gain, lp });
+      if (bell) S.tone(out, t + i * 0.085, { f: f * 2.76, dur: 0.12, gain: gain * 0.2 });
+    });
+    if (o.band) S.tone(out, t + 0.17, { type, f: mtof(base + 12), dur: 0.3, hold: 0.05, gain: gain * 0.9, lp });
+    return o.band ? 0.5 : 0.35;
+  } },
+  respectKos: { bus: 'ui', limit: 1, vol: 0.5, fn(S, out, t) {
+    S.tone(out, t, { f: 110, f1: 42, dur: 0.5, gain: 0.8 });   // a low hit
+    S.noise(out, t, { type: 'lowpass', brown: true, f: 500, f1: 120, dur: 0.45, gain: 0.6 });
+    for (const [m, dt] of [[45, 0.04], [46, 0.04], [39, 0.2]]) S.tone(out, t + dt, { type: 'sawtooth', f: mtof(m), a: 0.01, hold: 0.15, dur: 0.75, gain: 0.16, lp: 700 });   // a sour cluster, then the tritone below
+    return 1;
+  } },
+  // carjack: the thief grabs the handle (a latch clack, a tug-rattle)
+  jackGrab: { limit: 2, vol: 0.55, fn(S, out, t) {
+    S.noise(out, t, { type: 'bandpass', f: 2400, q: 4, dur: 0.02, gain: 1 });
+    S.noise(out, t + 0.07, { type: 'bandpass', f: 1900, q: 4, dur: 0.02, gain: 0.8 });
+    S.noise(out, t + 0.12, { type: 'bandpass', f: 420, q: 5, dur: 0.1, gain: 1.2 });   // the panel gives a little
+    return 0.25;
+  } },
+  // the door flung open and a body hauled out: whoosh, a scuffle of cloth and knocks, a thump on the ground
+  jackYank: { limit: 2, vol: 0.6, fn(S, out, t) {
+    S.noise(out, t, { type: 'bandpass', f: 2500, q: 3, dur: 0.02, gain: 1 });
+    S.noise(out, t + 0.01, { type: 'bandpass', f: 400, f1: 1500, glide: 0.12, q: 1.5, a: 0.02, dur: 0.16, gain: 1.2 });
+    S.tone(out, t + 0.08, { f: 90, f1: 60, dur: 0.1, gain: 0.5 });   // the door hits its stop
+    for (let i = 0; i < 4; i++) S.noise(out, t + 0.1 + i * 0.07 + sndRand(0, 0.03), { type: 'bandpass', f: sndRand(900, 1800), q: 1, a: 0.01, dur: sndRand(0.04, 0.08), gain: sndRand(0.5, 0.9) });
+    S.tone(out, t + 0.22, { f: 150, f1: 60, dur: 0.1, gain: 0.5 });   // a shove
+    S.tone(out, t + 0.42, { f: 110, f1: 45, dur: 0.16, gain: 0.9 });   // body on the tarmac
+    S.noise(out, t + 0.42, { type: 'lowpass', f: 900, f1: 200, dur: 0.14, gain: 0.8 });
+    return 0.6;
+  } },
+  // a mob crew bails out (Game.gangBail, or the passenger in Game.yank): one door kicked open hard against its
+  // stop (latch crack, swing, a clang with a short panel ring), then both feet hit the tarmac and the shoes scuff
+  crewDoor: { limit: 4, vol: 0.6, fn(S, out, t) {
+    S.noise(out, t, { type: 'bandpass', f: 2700, q: 3, dur: 0.018, gain: 1.1 });   // the latch
+    S.noise(out, t + 0.01, { type: 'bandpass', f: 500, f1: 1700, glide: 0.08, q: 1.5, a: 0.015, dur: 0.1, gain: 1 });   // the swing
+    S.tone(out, t + 0.07, { f: 100, f1: 55, dur: 0.12, gain: 0.9 });   // slams into its stop
+    S.noise(out, t + 0.07, { type: 'bandpass', f: 780, q: 9, dur: 0.22, gain: 1.6 });   // the panel rings a little
+    const land = t + sndRand(0.2, 0.26);
+    S.tone(out, land, { f: 120, f1: 50, dur: 0.08, gain: 0.7 });   // one foot
+    S.tone(out, land + 0.05, { f: 110, f1: 48, dur: 0.09, gain: 0.8 });   // the other
+    S.noise(out, land, { type: 'lowpass', f: 1100, f1: 250, dur: 0.1, gain: 0.6 });
+    S.noise(out, land + 0.1, { type: 'bandpass', f: sndRand(1800, 2600), q: 1.2, a: 0.01, dur: 0.09, gain: 0.5 });   // scuff
+    return 0.5;
+  } },
+  // the reverse jack: the door slammed shut and the tyres chirp as the car tears off
+  jackSlam: { limit: 2, vol: 0.6, fn(S, out, t) {
+    S.tone(out, t, { f: 90, f1: 50, dur: 0.14, gain: 1 });
+    S.noise(out, t, { type: 'lowpass', f: 800, dur: 0.12, gain: 0.8 });
+    S.noise(out, t + 0.01, { type: 'bandpass', f: 2200, q: 3, dur: 0.02, gain: 0.7 });
+    S.noise(out, t + 0.22, { type: 'bandpass', f: 1500, f1: 1100, q: 5, a: 0.03, hold: 0.15, dur: 0.4, gain: 1.1 });   // tyre chirp
+    return 0.65;
+  } },
+  punch: { limit: 3, vol: 0.7, fn(S, out, t, o) { // a fist lands on a body (o.cow: a big flank)
+    const c = o.cow ? 0.7 : 1;
+    S.tone(out, t, { f: 150 * c, f1: 55 * c, dur: 0.12, gain: 0.9 });
+    S.noise(out, t, { type: 'lowpass', f: 1400 * c, f1: 250, dur: 0.09, gain: 0.9 });
+    S.noise(out, t, { type: 'bandpass', f: 2600, q: 1.5, dur: 0.018, gain: 0.5 });
+    return 0.15;
+  } },
+  whiff: { limit: 2, vol: 0.7, fn(S, out, t) { // a punch at thin air
+    S.noise(out, t, { type: 'bandpass', f: 500, f1: 2200, f2: 700, glide: 0.07, q: 2, a: 0.02, dur: 0.15, gain: 1.5 });
+    return 0.16;
+  } },
+  punchCar: { limit: 2, vol: 0.6, fn(S, out, t, o) { // a fist on a car panel (o.tank: armour)
+    S.tone(out, t, { f: 110, f1: 60, dur: 0.1, gain: 0.6 });
+    if (o.tank) S.noise(out, t, { type: 'bandpass', f: 700, q: 12, dur: 0.35, gain: 1.4 });
+    else { S.noise(out, t, { type: 'bandpass', f: 380, q: 7, dur: 0.25, gain: 2 }); S.noise(out, t, { type: 'bandpass', f: 1200, q: 5, dur: 0.08, gain: 0.8 }); }
+    return 0.35;
+  } },
+  thwack: { limit: 4, vol: 0.55, fn(S, out, t, o) { // a round into a body (o.cow, o.player)
+    const c = o.cow ? 0.7 : 1;
+    S.noise(out, t, { type: 'bandpass', f: 1100 * c, q: 1.3, dur: 0.05, gain: 1 });
+    S.tone(out, t, { f: 170 * c, f1: 60, dur: 0.07, gain: 0.6 });
+    if (o.player) S.noise(out, t, { type: 'lowpass', f: 700, dur: 0.07, gain: 0.6 });
+    return 0.08;
+  } },
+  thud: { limit: 3, vol: 0.7, fn(S, out, t, o) { // a car (or a bull) hits a body, dry; o.k 0..1, o.cow
+    const k = o.k ?? 0.5, cow = o.cow;
+    S.tone(out, t, { f: cow ? 85 : 120, f1: cow ? 32 : 45, dur: 0.18 + 0.1 * k, gain: 1 });
+    S.noise(out, t, { type: 'lowpass', brown: true, f: 700, f1: 150, dur: 0.2 + (cow ? 0.1 : 0), gain: 0.8 + 0.5 * k });
+    S.noise(out, t, { type: 'lowpass', f: 300 + 1800 * k, dur: 0.06, gain: 0.5 });
+    return 0.3;
+  } },
+  splat: { limit: 3, vol: 0.75, fn(S, out, t, o) { // a car kills a body: the thud, a crunch, a wet slap
+    const k = o.k ?? 0.6;
+    SND_SFX.thud.fn(S, out, t, { k, cow: o.cow });
+    S.noise(out, t, { type: 'highpass', f: 2500, dur: 0.04, gain: 0.4 * k });
+    S.noise(out, t + 0.02, { type: 'lowpass', f: 2500, f1: 400, dur: 0.25, gain: 0.6 });
+    for (let i = 0, n = o.cow ? 6 : 4; i < n; i++) S.noise(out, t + sndRand(0.01, 0.14), { type: 'bandpass', f: sndRand(500, 1500) * (o.cow ? 0.8 : 1), q: 3, dur: sndRand(0.03, 0.07), gain: 0.9 });
+    return 0.35;
+  } },
+  bump: { limit: 3, vol: 0.6, fn(S, out, t, o) { // wheels roll over a body (o.k; o.wet)
+    const k = o.k ?? 0.5;
+    S.tone(out, t, { f: 90, f1: 45, dur: 0.1, gain: 0.6 * k });
+    S.noise(out, t, { type: 'lowpass', f: 500, dur: 0.08, gain: 0.7 * k });
+    if (o.wet) for (let i = 0; i < 2; i++) S.noise(out, t + sndRand(0.01, 0.06), { type: 'bandpass', f: sndRand(600, 1000), q: 3, dur: 0.04, gain: 0.6 * k });
+    return 0.15;
+  } },
+  bellow: { limit: 2, vol: 0.5, range: 1.2, fn(S, out, t, o) { // a scared / hurt cow (o.die: cut short, falling)
+    const p = (o.bull ? 0.75 : 1) * sndRand(1.1, 1.3);
+    return o.die ? sndMoo(S, out, t, p, 0.8, [1.3, 1.45, 0.6], 0.5) : sndMoo(S, out, t, p, sndRand(0.8, 1.1), [1.1, 1.55, 1], 0.35);
+  } },
+  snort: { limit: 2, vol: 0.75, fn(S, out, t) { // a bull about to charge: two snorts
+    for (const [d, l] of [[0, 0.2], [0.3, 0.3]]) {
+      S.noise(out, t + d, { type: 'bandpass', f: 520, f1: 300, q: 1.5, a: 0.02, dur: l, gain: 1.3 });
+      S.tone(out, t + d, { type: 'square', f: 70, f1: 50, dur: l, gain: 0.2, lp: 300 });
+    }
+    return 0.65;
   } },
   gull: { bus: 'amb', limit: 2, vol: 0.35, fn(S, out, t) {
     const n = 2 + Math.floor(Math.random() * 3), p = sndRand(0.85, 1.15);
@@ -607,6 +1013,14 @@ const SND_SFX = {
     S.tone(out, t + 0.3, { f: 85, f1: 55, dur: 0.12, gain: 0.7 });
     S.noise(out, t + 0.3, { type: 'lowpass', f: 700, dur: 0.1, gain: 0.5 });
     return 0.8;
+  } },
+  // paint shop: the spray gun cuts off (a puff of air) and the service bell dings
+  paintDone: { limit: 1, vol: 0.45, fn(S, out, t) {
+    S.noise(out, t, { type: 'highpass', f: 2500, a: 0.005, dur: 0.12, gain: 0.35 });
+    S.tone(out, t + 0.12, { f: 2093, dur: 1.2, gain: 0.5 });
+    S.tone(out, t + 0.12, { f: 2093 * 2.76, dur: 0.5, gain: 0.12 });
+    S.tone(out, t + 0.12, { type: 'triangle', f: 1046, dur: 0.6, gain: 0.15 });
+    return 1.35;
   } },
   move: { bus: 'ui', limit: 2, vol: 0.25, fn(S, out, t) {
     S.tone(out, t, { type: 'square', f: 1250, dur: 0.02, gain: 0.4, lp: 3000 });
@@ -796,9 +1210,16 @@ const Sound = {
     this.hitT = new WeakMap();
     this.scrapes = new Map();
     this.ph = { open: false, incoming: null, msg: null, seen: false };
-    this.amb = { n: 0, beds: {}, mooT: 0, shipT: 0, jetT: 0, boat: null, xings: null, xCity: null };
+    this.amb = { n: 0, beds: {}, mooT: 0, shipT: 0, boat: null, xings: null, xCity: null };
+    this.radioT = {};
+    this.pv = new WeakMap();          // per ped/cow: what we heard last tick (Sound.people)
+    this.craneSeen = new WeakMap();   // per crane: the last clank time we played
+    this.respT = {}; this.respAt = 0; this.mobAt = 0;
+    this.voxN = 0; this.voxT = -9; this.php = undefined; this.hurtAcc = 0; this.gruntT = -9;
+    this._burn = []; this._cows = [];
     this.train = { odo: 0, wait: 0, v: 0 };
     this._near = []; this._list = [];
+    this.subGangs();
     this.applyVolume();
     master.gain.value = this.muted ? 0 : this.vol * this.vol;
   },
@@ -872,6 +1293,32 @@ const Sound = {
   glass(out, t, k) {
     this.noise(out, t, { type: 'highpass', f: 5000, dur: 0.3, gain: 0.35 * k });
     for (let i = 0; i < 8; i++) this.tone(out, t + sndRand(0, 0.25), { type: 'triangle', f: sndRand(3000, 6500), dur: sndRand(0.05, 0.15), gain: 0.15 * k });
+  },
+  // a voiced sound: a sawtooth "glottis" through three band-pass formants (a vowel, SND_VOWEL).
+  // o = { f: [[t, Hz], ...] pitch contour (t from the start), dur, a, hold, gain, vowel, vowel2 (glided
+  // to over the middle), fm (formant scale), vib: [Hz, depth Hz], rough: [Hz, 0..1] (rasp), breath, lp }
+  vox(out, t, o) {
+    const c = o.f, x = this.osc('sawtooth', c[0][1]), end = t + o.dur, fm = o.fm || 1, peak = o.gain ?? 0.5;
+    x.frequency.setValueAtTime(c[0][1], t);
+    for (let i = 1; i < c.length; i++) x.frequency.exponentialRampToValueAtTime(c[i][1], t + Math.max(0.005, c[i][0]));
+    const g = this.gain(0), lp = this.filt('lowpass', o.lp || 3000, 0.7);
+    this.env(g.gain, t, o.a || 0.02, peak, o.hold || 0, o.dur);
+    const V = o.vowel, V2 = o.vowel2;
+    for (let i = 0; i < V.length; i++) {
+      const b = this.filt('bandpass', V[i][0] * fm, V[i][1]), bg = this.gain(V[i][2] * 2.2);
+      if (V2) { b.frequency.setValueAtTime(V[i][0] * fm, t + o.dur * 0.25); b.frequency.exponentialRampToValueAtTime(V2[i][0] * fm, t + o.dur * 0.8); }
+      x.connect(b); b.connect(bg); bg.connect(lp);
+    }
+    let tail = lp;
+    if (o.rough) {
+      const am = this.gain(1 - o.rough[1] * 0.5), l = this.osc('square', o.rough[0]), lg = this.gain(o.rough[1] * 0.5);
+      l.connect(lg); lg.connect(am.gain); lp.connect(am); tail = am;
+      l.start(t); l.stop(end + 0.05);
+    }
+    tail.connect(g); g.connect(out);
+    x.start(t); x.stop(end + 0.05);
+    if (o.vib) { const l = this.osc('sine', o.vib[0]), lg = this.gain(o.vib[1]); l.connect(lg); lg.connect(x.frequency); l.start(t); l.stop(end + 0.05); }
+    if (o.breath) this.noise(out, t, { type: 'bandpass', f: 1600 * fm, q: 1.2, a: o.a || 0.02, hold: o.hold, dur: o.dur, gain: o.breath * peak });
   },
   duck(k) { this.boom = Math.min(1, this.boom + k); },
 
@@ -1011,16 +1458,102 @@ const Sound = {
     try {
       const m = car.m;
       this.fire(m.tank ? 'hatch' : 'door', car.x, car.y, { enter: entering });
+      if (this.jacked && this.jacked.has(car)) { this.jacked.delete(car); return; }   // a jacked car's engine is already running
       if (entering && !m.air && this.classOf(car) !== 'electric') {
         this.fire('crank', car.x, car.y, { delay: 0.3 });
         this.igniteT = this.ctx.currentTime + 0.75;
       }
     } catch (e) { this.fail(e); }
   },
+  // carjack (Game.jack / yank / updateJack): stage 'grab' (the handle), 'steal' (who = the driver ped the
+  // player hauls out, may be null), 'back' (who = the ped pulling the player out), 'off' (the ped slams the
+  // door and tears off; its engine is the usual state-driven loop)
+  jack(car, stage, who) {
+    if (!this.on || !car) return;
+    try {
+      const x = car.x, y = car.y;
+      if (stage === 'grab') this.fire('jackGrab', x, y, SND_NOOPTS);
+      else if (stage === 'off') this.fire('jackSlam', x, y, SND_NOOPTS);
+      else {
+        this.fire('jackYank', x, y, SND_NOOPTS);
+        const v = who ? this.voiceOf(who) : sndVoice(), mood = who && who.mood;
+        if (stage === 'steal') {
+          (this.jacked || (this.jacked = new WeakSet())).add(car);
+          if (who && who.gang) this.fire('mobBark', x, y, { v: v.mob ? v : sndMobVoice(who.gang), text: 'HEY!', delay: 0.06 });
+          else if (mood === 'scared') this.fire('scream', x, y, { v, short: true, delay: 0.08 });
+          else this.fire('hey', x, y, { v, rough: mood === 'violent', delay: 0.06 });
+        } else {
+          this.fire('hey', x, y, { v, rough: true, delay: 0.04 });
+          this.fire('grunt', G.player.x, G.player.y, { delay: 0.4 });   // the player hits the ground
+          this.gruntT = this.ctx.currentTime + 0.4;   // playerHurt: not twice for the same fall
+        }
+      }
+    } catch (e) { this.fail(e); }
+  },
+  // a mob crew jumps out (Game.gangBail; Game.yank's passenger): a hard door + landing per member, at the member,
+  // the second door 60-110 ms after the first. Their first bark comes from people() (the new bubble).
+  bail(car, crew) {
+    if (!this.on || !car || !crew) return;
+    try {
+      let d = 0;
+      for (const p of crew) {
+        if (!p) continue;
+        this.fire('crewDoor', p.x, p.y, d ? { delay: d } : SND_NOOPTS);
+        d += sndRand(0.06, 0.11);
+      }
+    } catch (e) { this.fail(e); }
+  },
+  // Gangs.onChange (subscribed in build, or the first update): a two-note sting per change, one per 0.4 s per mob;
+  // stings from one event (the war rule moves two mobs) are staggered 0.3 s. A fall to kill on sight
+  // always plays, as the darker respectKos hit.
+  subGangs() {
+    if (!this.gangSub && typeof Gangs !== 'undefined' && Gangs.onChange) { this.gangSub = true; Gangs.onChange.push((id, a, b) => this.respect(id, a, b)); }
+  },
+  respect(id, old, now) {
+    if (!this.on || !this.inGame) return;
+    try {
+      const N = Gangs.NUM, band = (r) => (r <= N.kos ? 0 : r <= N.hostile ? 1 : r >= N.trusted ? 4 : r >= N.friendly ? 3 : 2);
+      const b0 = band(old), b1 = band(now), t = this.ctx.currentTime, kos = b1 === 0 && b0 > 0;
+      if (!kos && t < (this.respT[id] || 0)) return;
+      const delay = Math.max(0, this.respAt - t);
+      if (delay > 0.6) return;
+      this.respT[id] = t + 0.4; this.respAt = t + delay + 0.3;
+      if (kos) this.fire('respectKos', undefined, undefined, { delay });
+      else this.fire('respect', undefined, undefined, { mob: id, up: now > old, band: b1 > b0, delay });
+    } catch (e) { this.fail(e); }
+  },
+  // the voice a ped speaks with (kept in Sound.pv, so Sound.people uses the same one)
+  voiceOf(p) {
+    let e = this.pv.get(p);
+    if (!e) { e = { v: this.newVoice(p), t: -1, st: null, b: null, hp: 0, dead: false }; this.pv.set(p, e); }
+    return e.v;
+  },
+  newVoice(p) { return p.kind === 'cow' ? null : p.mood === 'cop' ? sndCopVoice() : p.gang ? sndMobVoice(p.gang) : sndVoice(); },
   pickup(kind) {
     if (!this.on) return;
     this.pickT = this.ctx.currentTime;
     this.ui(kind === 'cash' ? 'cash' : kind === 'health' ? 'health' : 'cock');
+  },
+  // Game.punch landed: kind 'body' (a ped or cow), 'player' or 'car'; t = what it hit
+  punch(kind, x, y, t) {
+    if (!this.on) return;
+    try {
+      if (kind === 'car') this.fire('punchCar', x, y, t && t.m && t.m.tank ? { tank: true } : SND_NOOPTS);
+      else this.fire('punch', x, y, t && t.kind === 'cow' ? { cow: true } : SND_NOOPTS);
+    } catch (e) { this.fail(e); }
+  },
+  // a car (or the train) meets a body, from Physics.carVsBodies / Train.bodies. v = impact speed (px/s);
+  // how: 'kill', 'down' (knocked over), 'roll' (wheels over someone lying), 'corpse', 'bump' (a cow shoved)
+  body(p, v, how) {
+    if (!this.on) return;
+    try {
+      const cow = p.kind === 'cow', k = sndClamp(v / 250, 0.2, 1);
+      if (how === 'kill') { this.fire('splat', p.x, p.y, { k, cow }); if (cow) this.fire('bellow', p.x, p.y, { die: true, bull: p.bull }); }
+      else if (how === 'down') this.fire('thud', p.x, p.y, { k: k * 0.8 });
+      else if (how === 'roll') this.fire('bump', p.x, p.y, { k: 0.8, wet: true });
+      else if (how === 'corpse') this.fire('bump', p.x, p.y, { k: cow ? 0.6 : 0.35, wet: !p.burnt });
+      else this.fire('thud', p.x, p.y, { k: sndClamp(v / 150, 0.1, 0.8), cow });
+    } catch (e) { this.fail(e); }
   },
 
   // ------------------------------------------------------------- per tick --
@@ -1030,14 +1563,15 @@ const Sound = {
   },
   frame(dt) {
     this.inGame = true;
-    const shop = typeof Shop !== 'undefined' && Shop.open;
+    this.subGangs();
+    const shop = (typeof Shop !== 'undefined' && Shop.open) || (typeof Paint !== 'undefined' && Paint.open);
     const play = G.state === 'play' && !G.paused && !shop;
     const call = play && typeof Phone !== 'undefined' && (Phone.incoming || Phone.calling) ? 1 : 0;
     this.boom = Math.max(0, this.boom - dt * 1.1);
     this.duckTo('sfx', play ? (call ? 0.6 : 1) * (1 - 0.3 * this.boom) : 0);
     this.duckTo('amb', play ? (call ? 0.45 : 1) * (1 - 0.65 * this.boom) : shop && !G.paused ? 0.3 : 0);
     this.duckTo('music', G.paused ? 0 : (call ? 0.4 : 1) * (1 - 0.6 * this.boom));
-    if (play) { this.vehicles(dt); this.world(dt); this.phone(); this.player(); }
+    if (play) { this.vehicles(dt); this.world(dt); this.phone(); this.player(); this.playerHurt(dt); this.paint(); }
     else if (shop) this.shop();
     if (!shop) this.shopSel = -1;
     this.sweep();
@@ -1152,6 +1686,8 @@ const Sound = {
       if (v) v.set();
     }
     if (typeof Train !== 'undefined' && Train.rail) this.trainSounds(dt);
+    this.people();
+    this.airport();
     this.ambience(dt, cam);
   },
 
@@ -1212,8 +1748,8 @@ const Sound = {
   },
 
   // Ambience: a coarse 7×5 sample of tile kinds around the camera every 1/3 s picks the beds'
-  // levels and rolls the dice for critters (cows from Render.idx.props, ships/planes from
-  // Render.idx.sprites). Beds crossfade on their own slow time constant.
+  // levels and rolls the dice for critters (grazing cows from G.peds, ships and boats from
+  // Render.idx.sprites; planes are real now, see airport()). Beds crossfade on their own slow time constant.
   ambience(dt, cam) {
     const A = this.amb, c = G.city, now = this.ctx.currentTime;
     if (--A.n <= 0) {
@@ -1253,23 +1789,25 @@ const Sound = {
       if ((co > 0.05 || (w > 0.1 && land > 0.1)) && Math.random() < 0.07 * (1 - night) && (rpt(1) || rpt(2))) this.fire('gull', this._tx, this._ty, SND_NOOPTS);
       if (T.birds > 0 && gr > 0.25 && Math.random() < 0.25 * gr * T.birds && rpt(2)) this.fire('songbird', this._tx, this._ty, SND_NOOPTS);
       if (zone === 'industrial' && Math.random() < 0.08) this.fire('clank', cam.cx + sndRand(-0.5, 0.5) * cam.w, cam.cy + sndRand(-0.5, 0.5) * cam.h, SND_NOOPTS);
+      // grazing cows (G.peds, kind 'cow') on screen: one moos now and then, more often in a big herd
+      if (now > A.mooT && G.peds) {
+        const cows = this._cows;
+        cows.length = 0;
+        for (const p of G.peds) if (p.kind === 'cow' && !p.dead && !p.gone && p.state === 'graze' && p.x > cam.x - 60 && p.x < cam.x + cam.w + 60 && p.y > cam.y - 60 && p.y < cam.y + cam.h + 60) cows.push(p);
+        if (cows.length) { const cw = cows[Math.floor(Math.random() * cows.length)]; this.fire('moo', cw.x, cw.y, cw.bull ? { bull: true } : SND_NOOPTS); A.mooT = now + sndRand(3, 12) * (cows.length > 4 ? 0.7 : 1); }
+      }
       const I = typeof Render !== 'undefined' && Render.idx;
       if (I) {
-        if (now > A.mooT) {
-          const cows = I.props.query(cam.x - 60, cam.y - 60, cam.x + cam.w + 60, cam.y + cam.h + 60).filter((p) => p.sprite === 'cow' && !p.broken);
-          if (cows.length) { const cw = cows[Math.floor(Math.random() * cows.length)]; this.fire('moo', cw.x, cw.y, SND_NOOPTS); A.mooT = now + sndRand(3, 12); }
-        }
         const Rw = Math.max(360, cam.w);
-        let boat = null, bd = Rw * 0.8, ship = null, plane = false;
+        let boat = null, bd = Rw * 0.8, ship = null;
         for (const s of I.sprites.query(cam.cx - Rw * 2, cam.cy - Rw * 2, cam.cx + Rw * 2, cam.cy + Rw * 2)) {
           if (s.sheet === 'ships' || s.sheet === 'boats') {
             if (s.tag === 'container_ship') ship = s;
             else if (s.tag === 'motorboat' || s.tag === 'yacht') { const d = Math.hypot(s.x - cam.cx, s.y - cam.cy); if (d < bd) { bd = d; boat = s; } }
-          } else if ((s.sheet === 'planes' || s.sheet === 'air') && s.tag === 'airliner') plane = true;
+          }
         }
         A.boat = boat;
         if (ship) { if (!A.shipT) A.shipT = now + sndRand(5, 15); else if (now > A.shipT) { this.fire('shipHorn', ship.x, ship.y, SND_NOOPTS); A.shipT = now + sndRand(30, 70); } } else A.shipT = 0;
-        if (plane) { if (!A.jetT) A.jetT = now + sndRand(5, 15); else if (now > A.jetT) { this.fire('jet', undefined, undefined, SND_NOOPTS); A.jetT = now + sndRand(25, 55); } } else A.jetT = 0;
       }
     }
     this.beds();
@@ -1281,8 +1819,22 @@ const Sound = {
   shop() {
     this.beds();
     if (typeof Phone !== 'undefined') this.ph.open = Phone.open;
-    if (this.shopSel >= 0 && Shop.sel !== this.shopSel) this.fire('move', undefined, undefined, SND_NOOPTS);
-    this.shopSel = Shop.sel;
+    const sel = typeof Shop !== 'undefined' && Shop.open ? Shop.sel : Paint.sel;
+    if (this.shopSel >= 0 && sel !== this.shopSel) this.fire('move', undefined, undefined, SND_NOOPTS);
+    this.shopSel = sel;
+  },
+  // paint shop respray (Paint.spray = { car, t } while it runs): the spray loop, then a ding
+  paint() {
+    if (typeof Paint === 'undefined') return;
+    const S = Paint.spray;
+    if (S && S.car) {
+      const v = this.want('paintSpray', S, S.car.x, S.car.y);
+      if (v) v.set(S.t);
+      this.sprayCar = S.car;
+    } else if (this.sprayCar) {
+      this.fire('paintDone', this.sprayCar.x, this.sprayCar.y, SND_NOOPTS);
+      this.sprayCar = null;
+    }
   },
 
   // cellphone: ring / calling loops, and sounds for open/close, answer/hang-up, clicks, messages
@@ -1312,6 +1864,125 @@ const Sound = {
     const k = c.kind[ty * c.W + tx];
     const soft = k === KIND.GRASS || k === KIND.LAWN || k === KIND.MEADOW || k === KIND.FOREST || k === KIND.SAND || k === KIND.FIELD || k === KIND.DIRT;
     this.fire('step', undefined, undefined, soft ? { soft: true } : SND_NOOPTS);
+  },
+
+  // the player on foot getting hurt (bullets, fists, a bull, fire): a grunt, at most every 0.6 s
+  playerHurt(dt) {
+    const p = G.player, now = this.ctx.currentTime;
+    const drop = this.php === undefined ? 0 : this.php - p.hp;
+    this.php = p.hp;
+    this.hurtAcc = this.hurtAcc * Math.pow(0.1, dt) + Math.max(0, drop);
+    if (this.hurtAcc >= 4 && !p.dead && !p.car && now - this.gruntT > 0.6) {
+      this.gruntT = now; this.hurtAcc = 0;
+      this.fire('grunt', p.x, p.y, SND_NOOPTS);
+    }
+  },
+
+  // People and cows (G.peds): read from state like the engines, no hooks in peds.js. Each body within
+  // earshot is compared with what it was last tick (Sound.pv): a new state, a new speech bubble, lost
+  // hp or death starts its voice. Burning peds get the burnScream loop, running cows the hooves loop.
+  // Crowds: at most 2 new voices per tick and one every 60 ms, plus the per-sound voice limits.
+  people() {
+    const list = G.peds;
+    if (!list || !list.length) return;
+    const cam = G.cam, R = Math.max(360, cam.w) * 1.1, R2 = R * R, M = this.pv, tick = this.tick, burn = this._burn;
+    burn.length = 0;
+    this.voxN = 0; this.copN = 0;
+    let hn = 0, hx = 0, hy = 0, heavy = false;
+    for (const p of list) {
+      if (p.gone) continue;
+      const dx = p.x - cam.cx, dy = p.y - cam.cy, near = dx * dx + dy * dy < R2;
+      let e = M.get(p);
+      if (!e) { e = { v: this.newVoice(p), t: -1, st: null, b: null, hp: 0, dead: false }; M.set(p, e); }
+      if (near) {
+        if (e.t === tick - 1) this.pedEvents(p, e);   // heard last tick too: react to what changed
+        if (p.burning && !p.dead) burn.push(p);
+        else if (p.kind === 'cow' && !p.dead && (p.state === 'stampede' || p.state === 'charge')) { hn++; hx += p.x; hy += p.y; heavy = heavy || p.state === 'charge'; }
+      }
+      e.t = near ? tick : -1; e.st = p.state; e.b = p.bubble; e.hp = p.hp; e.dead = p.dead;
+    }
+    if (burn.length) {
+      this.byDist(burn);
+      for (let i = 0; i < burn.length && i < SND_MAX.burn; i++) { const p = burn[i], v = this.want('burnScream', p, p.x, p.y, M.get(p).v); if (v) v.set(); }
+    }
+    if (hn) { const v = this.want('hooves', 'herd', hx / hn, hy / hn); if (v) v.set(hn, heavy); }
+  },
+  pedEvents(p, e) {
+    const st = p.state, changed = st !== e.st, bub = !!p.bubble && p.bubble !== e.b, hurt = e.hp - p.hp >= 3;
+    if (p.dead) {   // killed by a car or the train: the splat says it (Sound.body); burnt: the loop did
+      if (!e.dead && !p.burnt && !(p.runBy && p.runBy.length)) this.vocal(p.kind === 'cow' ? 'bellow' : 'ouch', p, p.kind === 'cow' ? { die: true, bull: p.bull } : { v: e.v, death: true });
+      return;
+    }
+    if (p.kind === 'cow') {
+      if (changed && st === 'charge') this.fire('snort', p.x, p.y, SND_NOOPTS);
+      else if ((changed && st === 'stampede' && Math.random() < 0.4) || (hurt && Math.random() < 0.6)) this.vocal('bellow', p, p.bull ? { bull: true } : SND_NOOPTS);
+      return;
+    }
+    if (p.burning) return;
+    if (p.mood === 'cop') { this.copEvents(p, e, bub, hurt); return; }
+    if (p.gang) { this.mobEvents(p, e, st, changed, bub); return; }
+    if (changed && st === 'fight') this.vocal('growl', p, { v: e.v });
+    else if (changed && (st === 'flee' || st === 'cower')) {
+      if (p.mood === 'angry' && bub) this.vocal('hey', p, { v: e.v });
+      else if (bub || hurt || Math.random() < 0.35) this.vocal('scream', p, { v: e.v, short: st === 'cower' });
+    } else if (hurt) this.vocal('ouch', p, { v: e.v });
+    else if (bub) this.vocal(p.mood === 'scared' ? 'scream' : 'hey', p, { v: e.v, short: true, low: p.mood === 'violent' });
+  },
+  // cops don't scream: a grunt when hit, and every bubble is barked (radio squelch on OFFICER DOWN!,
+  // a roger beep on LOST HIM.). A radio call engages several at once: at most 2 barks a tick, staggered.
+  copEvents(p, e, bub, hurt) {
+    if (hurt) this.vocal('ouch', p, { v: e.v });
+    if (!bub || this.copN >= 2) return;
+    const text = p.bubble.text, radio = text === 'OFFICER DOWN!' ? 'down' : text === 'LOST HIM.' ? 'lost' : null, now = this.ctx.currentTime;
+    if (radio) { if (now < (this.radioT[radio] || 0)) return; this.radioT[radio] = now + 2.5; }   // one cop calls it in
+    this.fire('copBark', p.x, p.y, { v: e.v, text, radio,
+      delay: (hurt ? 0.22 : 0) + this.copN * 0.35 });
+    this.copN++;
+  },
+  // mob members: every bubble is shouted in the mob's voice (queued 0.35 s apart, dropped past 0.7 s), a fight
+  // start without a line is a growl; hurt = ouch, a big hit (a shotgun) = a short yelp. They never cower-scream.
+  mobEvents(p, e, st, changed, bub) {
+    if (!e.v || e.v.mob !== p.gang) e.v = sndMobVoice(p.gang);   // made a member after its voice was picked
+    const lost = e.hp - p.hp;
+    if (lost >= 14) this.vocal('scream', p, { v: e.v, short: true });
+    else if (lost >= 3) this.vocal('ouch', p, { v: e.v });
+    const now = this.ctx.currentTime, wait = Math.max(0, this.mobAt - now) + (lost >= 3 ? 0.25 : 0);
+    if (bub && wait < 0.7) {   // a rally: the lines queue up 0.35 s apart, and the rest stay silent
+      this.fire('mobBark', p.x, p.y, { v: e.v, text: p.bubble.text, delay: wait });
+      this.mobAt = now + wait + 0.35;
+    } else if (changed && st === 'fight') this.vocal('growl', p, { v: e.v });
+  },
+  vocal(name, p, o) {
+    const now = this.ctx.currentTime;
+    if (this.voxN >= 2 || now - this.voxT < 0.06) return;
+    this.voxN++; this.voxT = now;
+    this.fire(name, p.x, p.y, o);
+  },
+
+  // Flights.planes / Cranes.list (src/airport.js): engines follow the flight phase, crane motors
+  // their drive speeds, and a crane's clank plays when its `clank` time changes.
+  airport() {
+    if (typeof Flights !== 'undefined' && Flights.planes) {
+      let n = 0;
+      for (const p of Flights.planes) {
+        if (p.phase === 'parked' || p.gone || n >= SND_MAX.plane) continue;
+        const P = p.P || {}, ph = p.phase, fast = P.rot ? sndClamp(p.v / P.rot, 0, 1) : 0;
+        const spool = ph === 'push' ? 0.1 : ph === 'lineup' ? 0.3 : ph === 'takeoff' ? 0.55 + 0.45 * fast : ph === 'climb' ? 1
+          : ph === 'approach' ? 0.45 : ph === 'rollout' ? 0.3 : 0.2 + 0.1 * sndClamp(p.v / 80, 0, 1);
+        const v = this.want(p.tag === 'propplane' ? 'prop' : 'jet', p, p.x, p.y, undefined, 1 / (1 + (p.alt || 0) / 150));
+        if (v) { v.set(spool, p.rev ? 1 : 0, this._g); n++; }
+      }
+    }
+    if (typeof Cranes !== 'undefined' && Cranes.list) {
+      const C = typeof CR !== 'undefined' ? CR : null, TV = C ? C.TROLLEY_V : 45, HV = C ? C.HOIST_V : 40;
+      for (const k of Cranes.list) {
+        const y = k.y - (k.ty || 0), last = this.craneSeen.get(k);   // over the trolley
+        if (last !== undefined && k.clank !== last) this.fire('craneClank', k.x, y, SND_NOOPTS);
+        this.craneSeen.set(k, k.clank);
+        const amt = sndClamp(Math.max(k.trolleyV / TV, k.hoistV / HV, k.moving ? 1 : 0), 0, 1);
+        if (amt > 0 || (k.q && k.q.length)) { const v = this.want('craneMotor', k, k.x, y); if (v) v.set(amt, k.hoistV > 0); }
+      }
+    }
   },
 
   // ----------------------------------------------------------- soundboard --
@@ -1362,6 +2033,9 @@ const Sound = {
       v.set(this.engineRpm(item.arg, sp, thr, !!s.rev), Math.abs(thr), sp);
     } else if (ctl === 'rotor') v.set(s.amount ?? 1, s.throttle ?? 0.5);
     else if (ctl === 'amount') v.set(s.amount ?? 0.7);
+    else if (ctl === 'herd') v.set(1 + Math.round(9 * (s.amount ?? 0.3)), !!s.rev);
+    else if (ctl === 'jet') v.set(s.amount ?? 0.3, s.rev ? 1 : 0, 1 - (s.far ?? 0));
+    else if (ctl === 'crane') v.set(s.amount ?? 0.7, !!s.rev);
     else if (ctl === 'dt') v.set(0.05);
     else v.set();
   },
@@ -1422,6 +2096,36 @@ Sound.catalog = [
     { shot: 'buzz', label: 'Can\'t buy (full / no cash)' },
     { shot: 'shopLeave', label: 'Leave' },
   ]],
+  ['Carjack', [
+    { shot: 'jackGrab', label: 'Door handle grabbed', note: 'Game.jack starts' },
+    { fn: (S) => { const v = sndVoice(); S.fire('jackYank', 0, 0, SND_NOOPTS); S.fire('hey', 0, 0, { v, delay: 0.06 }); }, label: 'Yank: angry driver "HEY!"', note: 'Game.yank, the player steals' },
+    { fn: (S) => { const v = sndVoice(); S.fire('jackYank', 0, 0, SND_NOOPTS); S.fire('hey', 0, 0, { v, rough: true, delay: 0.06 }); }, label: 'Yank: violent driver', note: 'then "come on!" when he gets up' },
+    { fn: (S) => { const v = sndVoice(); S.fire('jackYank', 0, 0, SND_NOOPTS); S.fire('scream', 0, 0, { v, short: true, delay: 0.08 }); }, label: 'Yank: scared driver' },
+    { fn: (S) => { S.fire('jackYank', 0, 0, SND_NOOPTS); S.fire('hey', 0, 0, { rough: true, delay: 0.04 }); S.fire('grunt', 0, 0, { delay: 0.4 }); }, label: 'Pulled out by a driver (+ player grunt)', note: 'reverse jack' },
+    { shot: 'jackSlam', label: 'Door slam + tyres, the car tears off', note: 'Traffic.takeOver after a reverse jack' },
+    { fn: (S) => { S.fire('crewDoor', 0, 0, SND_NOOPTS); S.fire('crewDoor', 0, 0, { delay: 0.08 }); S.fire('mobBark', 0, 0, { v: sndMobVoice('moretti'), text: 'GET HIM!', delay: 0.45 }); }, label: 'Mob crew bails out (+ first bark)', note: 'Game.gangBail; one door for the passenger in Game.yank' },
+  ]],
+  ['Cops', [
+    ...Object.keys(SND_COP_SAYS).map((text) => ({ shot: 'copBark', o: { text, radio: text === 'OFFICER DOWN!' ? 'down' : text === 'LOST HIM.' ? 'lost' : null },
+      label: 'Cop: ' + text, note: text === 'OFFICER DOWN!' ? 'radio squelch + chirp' : text === 'LOST HIM.' ? 'quiet, roger beep' : 'engage bubble' })),
+    { fn: (S) => S.fire('ouch', 0, 0, { v: sndCopVoice() }), label: 'Cop hit', note: 'cops never scream; shotgun = Weapons: Shotgun' },
+  ]],
+  ['Mobs', [
+    ...['moretti', 'orlov', 'orchid'].flatMap((mob) => [
+      ...GANG_SAYS_SND[mob].map((text) => ({ shot: 'mobBark', o: { mob, text }, label: mob[0].toUpperCase() + mob.slice(1) + ': ' + text, note: 'a new voice each press' })),
+      { fn: (S) => { const v = sndMobVoice(mob); S.fire('ouch', 0, 0, { v }); S.fire('scream', 0, 0, { v, short: true, delay: 0.5 }); S.fire('growl', 0, 0, { v, delay: 1 }); },
+        label: mob[0].toUpperCase() + mob.slice(1) + ': hurt, big hit, fight', note: 'ouch, shotgun yelp, "come on!"' },
+      { shot: 'respect', o: { mob, up: true }, label: 'Respect up: ' + mob, note: 'Gangs.onChange' },
+      { shot: 'respect', o: { mob, up: true, band: true }, label: 'Respect up a band: ' + mob },
+      { shot: 'respect', o: { mob, up: false }, label: 'Respect down: ' + mob },
+    ]),
+    { shot: 'respectKos', label: 'Respect falls to KILL ON SIGHT', note: 'any mob' },
+  ]],
+  ['Paint shop', [
+    { loop: 'paintSpray', label: 'Respray: compressor + spray hiss', note: 'Paint.spray (1.2 s in game)' },
+    { shot: 'paintDone', label: 'Respray done: ding' },
+    { shot: 'shopEnter', label: 'Menu: same as the gun store', note: 'shopEnter / move / buy / buzz / shopLeave' },
+  ]],
   ['World', [
     { loop: 'train', ctl: 'amount', label: 'Train rumble', note: 'amount = speed' },
     { shot: 'clack', label: 'Rail joint clack' },
@@ -1431,8 +2135,8 @@ Sound.catalog = [
     { shot: 'bell', label: 'Crossing bell (one ding)' },
     { shot: 'shipHorn', label: 'Container ship horn' },
     { loop: 'boat', label: 'Boat idle putter' },
-    { shot: 'jet', label: 'Distant jet' },
-    { shot: 'moo', label: 'Cow' },
+    { shot: 'moo', label: 'Cow (grazing)' },
+    { shot: 'moo', o: { bull: true }, label: 'Bull (grazing)' },
     { shot: 'gull', label: 'Gulls' },
     { shot: 'songbird', label: 'Songbird' },
     { shot: 'clank', label: 'Industrial clank' },
@@ -1443,6 +2147,42 @@ Sound.catalog = [
     { shot: 'sign', label: 'Sign / meter / mailbox' },
     { shot: 'cactus', label: 'Cactus' },
     { loop: 'payphone', label: 'Payphone ringing' },
+  ]],
+  ['People and cows', [
+    { shot: 'scream', label: 'Scream', note: 'a scared ped starts fleeing (a new voice each press)' },
+    { shot: 'scream', o: { short: true }, label: 'Scream: short yelp', note: 'cowering, or a scared ped\'s bubble' },
+    { fn: (S) => { for (let i = 0; i < 3; i++) S.fire('scream', 0, 0, { delay: i * 0.13 }); }, label: 'Crowd scatter (3 screams)' },
+    { loop: 'burnScream', ctl: 'dt', label: 'Burning scream', note: 'state burning' },
+    { shot: 'ouch', label: 'Hurt', note: 'a ped loses 3+ hp' },
+    { shot: 'ouch', o: { death: true }, label: 'Death cry', note: 'killed, not by a car or fire' },
+    { shot: 'hey', label: 'Angry "HEY!"', note: 'an angry ped\'s bubble' },
+    { shot: 'hey', o: { low: true }, label: 'Violent "huh?"', note: 'a violent ped sizes you up' },
+    { shot: 'growl', label: 'Violent "come on!"', note: 'a fight starts' },
+    { shot: 'grunt', label: 'Player hurt grunt', note: 'on foot, 4+ hp lost' },
+    { shot: 'punch', label: 'Punch lands' },
+    { shot: 'punch', o: { cow: true }, label: 'Punch lands on a cow' },
+    { shot: 'whiff', label: 'Punch misses' },
+    { shot: 'punchCar', label: 'Punch on a car' },
+    { shot: 'punchCar', o: { tank: true }, label: 'Punch on the tank' },
+    { shot: 'thwack', label: 'Round hits a ped' },
+    { shot: 'thwack', o: { player: true }, label: 'Round hits the player' },
+    { shot: 'thwack', o: { cow: true }, label: 'Round hits a cow' },
+    { shot: 'thud', o: { k: 0.4 }, label: 'Car knocks a ped down' },
+    { shot: 'splat', o: { k: 0.7 }, label: 'Car kills a ped' },
+    { shot: 'splat', o: { k: 0.8, cow: true }, label: 'Car kills a cow (+ dying bellow in game)' },
+    { shot: 'thud', o: { k: 0.4, cow: true }, label: 'Car shoves a cow / bull rams' },
+    { shot: 'bump', o: { k: 0.8, wet: true }, label: 'Wheels over someone lying down' },
+    { shot: 'bump', o: { k: 0.35, wet: true }, label: 'Wheels over a corpse' },
+    { shot: 'bellow', label: 'Scared cow', note: 'stampede, or hurt' },
+    { shot: 'bellow', o: { die: true }, label: 'Dying cow' },
+    { shot: 'snort', label: 'Bull snort', note: 'a bull starts its charge' },
+    { loop: 'hooves', ctl: 'herd', label: 'Hooves', note: 'amount = cows running; the box = a charging bull' },
+  ]],
+  ['Airport and port', [
+    { loop: 'jet', ctl: 'jet', label: 'Airliner engines', note: 'amount = spool (0.1 push, 0.2 taxi, 0.45 approach, 1 take-off); box = reverse thrust; far = distance dulling' },
+    { loop: 'prop', ctl: 'jet', label: 'Prop plane engine', note: 'same controls' },
+    { loop: 'craneMotor', ctl: 'crane', label: 'Crane motors', note: 'amount = drive speed; box = hoisting' },
+    { shot: 'craneClank', label: 'Crane: container locks / lands' },
   ]],
   ['Ambience beds', [
     { loop: 'bedCity', label: 'Downtown hum' },

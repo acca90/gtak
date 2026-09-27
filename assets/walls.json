@@ -2014,6 +2014,78 @@
     "spriteSourceSize": { "x": 0, "y": 0, "w": 32, "h": 32 },
     "sourceSize": { "w": 32, "h": 32 },
     "duration": 100
+   },
+   {
+    "filename": "walls 224.aseprite",
+    "frame": { "x": 7168, "y": 0, "w": 32, "h": 32 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 32, "h": 32 },
+    "sourceSize": { "w": 32, "h": 32 },
+    "duration": 100
+   },
+   {
+    "filename": "walls 225.aseprite",
+    "frame": { "x": 7200, "y": 0, "w": 32, "h": 32 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 32, "h": 32 },
+    "sourceSize": { "w": 32, "h": 32 },
+    "duration": 100
+   },
+   {
+    "filename": "walls 226.aseprite",
+    "frame": { "x": 7232, "y": 0, "w": 32, "h": 32 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 32, "h": 32 },
+    "sourceSize": { "w": 32, "h": 32 },
+    "duration": 100
+   },
+   {
+    "filename": "walls 227.aseprite",
+    "frame": { "x": 7264, "y": 0, "w": 32, "h": 32 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 32, "h": 32 },
+    "sourceSize": { "w": 32, "h": 32 },
+    "duration": 100
+   },
+   {
+    "filename": "walls 228.aseprite",
+    "frame": { "x": 7296, "y": 0, "w": 32, "h": 32 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 32, "h": 32 },
+    "sourceSize": { "w": 32, "h": 32 },
+    "duration": 100
+   },
+   {
+    "filename": "walls 229.aseprite",
+    "frame": { "x": 7328, "y": 0, "w": 32, "h": 32 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 32, "h": 32 },
+    "sourceSize": { "w": 32, "h": 32 },
+    "duration": 100
+   },
+   {
+    "filename": "walls 230.aseprite",
+    "frame": { "x": 7360, "y": 0, "w": 32, "h": 32 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 32, "h": 32 },
+    "sourceSize": { "w": 32, "h": 32 },
+    "duration": 100
+   },
+   {
+    "filename": "walls 231.aseprite",
+    "frame": { "x": 7392, "y": 0, "w": 32, "h": 32 },
+    "rotated": false,
+    "trimmed": false,
+    "spriteSourceSize": { "x": 0, "y": 0, "w": 32, "h": 32 },
+    "sourceSize": { "w": 32, "h": 32 },
+    "duration": 100
    }
  ],
  "meta": {
@@ -2021,7 +2093,7 @@
   "version": "1.3.18.6-x64",
   "image": "walls.png",
   "format": "RGBA8888",
-  "size": { "w": 7168, "h": 32 },
+  "size": { "w": 7424, "h": 32 },
   "scale": "1",
   "frameTags": [
    { "name": "wall_teal", "from": 0, "to": 7, "direction": "forward", "color": "#000000ff" },
@@ -2051,7 +2123,8 @@
    { "name": "wall_station", "from": 192, "to": 199, "direction": "forward", "color": "#000000ff" },
    { "name": "wall_terminal", "from": 200, "to": 207, "direction": "forward", "color": "#000000ff" },
    { "name": "wall_hangar", "from": 208, "to": 215, "direction": "forward", "color": "#000000ff" },
-   { "name": "wall_gunshop", "from": 216, "to": 223, "direction": "forward", "color": "#000000ff" }
+   { "name": "wall_gunshop", "from": 216, "to": 223, "direction": "forward", "color": "#000000ff" },
+   { "name": "wall_paintshop", "from": 224, "to": 231, "direction": "forward", "color": "#000000ff" }
   ],
   "layers": [
    { "name": "walls", "opacity": 255, "blendMode": "normal" }
