@@ -1,6 +1,16 @@
 # coordinator — cross-cutting decisions
 Written by the main session (not a subagent). Format: `.claude/rules/decisions.md`. Newest first.
 
+## 2026-09-27 · The stadium is an oval building (`b.oval`), not a rectangle
+- **Decision:** `addBuilding(..., { oval: true })` claims only the tiles whose centre is inside the outer wall
+  (footprint − 3 px); those tiles bake as plaza (`sub & 0x80`). The renderer draws the oval as stacked wall slices
+  (`Render.stadiumWall`: concrete base, white leaves above), an oval cast shadow, and a roof canvas that is
+  transparent outside the leaf ring. Inside: roof ring 27%, thin stands (20% of the opening), a grass oval with the
+  pitch inscribed (0.74 × 0.64 of it), dugouts on the north touchline. Replaces the paving painted on the roof corners.
+- **Why:** the user found the stadium in a square building "weird" and pointed at the Beira-Rio aerial photo.
+- **Where:** `addBuilding` + ground bake in src/city.js; `stadiumGeom/Outer/Roof/Wall`, `drawBuilding`, shadows, minimap in src/render.js.
+- **Status:** active; screenshot-checked (day, night), not play-tested
+
 ## 2026-09-27 · Mob cars carry a crew of two; rival mobs avoid and shoot each other
 - **Decision:** a gang car never reacts like a civilian: when the player hits it, it stops and its two members bail
   out fighting (`Peds.driverOut(..., { gang, bail: true, foe })`); jacking one brings out both. Members don't walk

@@ -451,7 +451,14 @@ const City = {
       if (tw < 2 || th < 2) return null;
       if (!extra.force && !areaOpen(tx, ty, tw, th)) return null;
       delete extra.force;
-      if (!extra.overhang) for (let y = ty; y < ty + th; y++) for (let x = tx; x < tx + tw; x++) { c.kind[I(x, y)] = KIND.BUILDING; c.solid[I(x, y)] = 1; }
+      // an oval building (the stadium) only claims the tiles whose centre is inside its outer wall
+      // (Render.stadiumGeom: 3 px in from the footprint); those keep the plaza paving underneath
+      const ra = T(tw) / 2 - 3, rb = T(th) / 2 - 3;
+      const inside = (x, y) => !extra.oval || ((T(x - tx) + 8 - T(tw) / 2) / ra) ** 2 + ((T(y - ty) + 8 - T(th) / 2) / rb) ** 2 <= 1;
+      if (!extra.overhang) for (let y = ty; y < ty + th; y++) for (let x = tx; x < tx + tw; x++) if (inside(x, y)) {
+        if (extra.oval) c.sub[I(x, y)] = 0x80 | (c.kind[I(x, y)] === KIND.PLAZA ? c.sub[I(x, y)] & 1 : 0);
+        c.kind[I(x, y)] = KIND.BUILDING; c.solid[I(x, y)] = 1;
+      }
       const b = Object.assign({
         tx, ty, tw, th, x: T(tx), y: T(ty), w: T(tw), h: T(th),
         floors, height: floors * 32, wall, roof, lit: rg.lit, seed: (R() * 1e9) | 0,
@@ -1070,7 +1077,7 @@ const City = {
         const E = { x: sx - 6, y: sy - 5, w: sw + 12, h: sh + 9 };      // esplanade (the south side is the main gate)
         const ecx = sx + sw / 2, ecy = sy + sh / 2;
         fill(E, KIND.PLAZA, (x, y) => Math.floor(Math.hypot((x + 0.5 - ecx) / (sw / 2), (y + 0.5 - ecy) / (sh / 2)) * 5) & 1);
-        const bl = addBuilding(sx, sy, sw, sh, 3, 'stadium', { type: 'stadium', ring: 5 }, b.rg, { sign: 'PASTEL STADIUM' });
+        const bl = addBuilding(sx, sy, sw, sh, 3, 'stadium', { type: 'stadium' }, b.rg, { sign: 'PASTEL STADIUM', oval: true });
         // trees at the esplanade's edge, benches and lamps along it
         for (let k = 0; k <= 8; k++) {
           const x = E.x + 1 + (k * (E.w - 3)) / 8;
@@ -1086,7 +1093,7 @@ const City = {
         c.stalls = c.stalls.filter((s2) => !(s2.x > T(A.x) && s2.x < T(A.x + A.w) && s2.y > T(A.y) && s2.y < T(A.y + A.h)) || onLot(s2));
         c.parked = c.parked.filter((s2) => !(s2.x > T(A.x) && s2.x < T(A.x + A.w) && s2.y > T(A.y) && s2.y < T(A.y + A.h)) || onLot(s2));
         landmark('Pastel Stadium', T(sx + sw / 2), T(E.y + E.h - 1), { kind: 'building', rect: { x: bl.tx, y: bl.ty, w: bl.tw, h: bl.th },
-          what: `${sw}x${sh} Beira-Rio style bowl (red stands under a white leaf roof, rim floodlights), paved esplanade ${E.w}x${E.h} with trees, benches and lamps, car parks north and south, helipad, on the bay shore (waterfront promenade east of the avenue)` });
+          what: `${sw}x${sh} oval Beira-Rio style bowl (oval walls of white leaves, red stands, grass oval with the pitch inscribed, rim floodlights), paved esplanade ${E.w}x${E.h} with trees, benches and lamps, car parks north and south, helipad, on the bay shore (waterfront promenade east of the avenue)` });
         b.stadiumE = E;
       },
       tvhq(b) {
@@ -3054,6 +3061,7 @@ const City = {
             break;
           }
           case KIND.WALK: case KIND.BUILDING: {
+            if (c.sub[i] & 0x80) { f = A('plaza', c.sub[i] & 1); break; }   // under an oval building
             let mask = 0;
             if (edge(kindAt(x, y - 1))) mask |= 1;
             if (edge(kindAt(x + 1, y))) mask |= 2;

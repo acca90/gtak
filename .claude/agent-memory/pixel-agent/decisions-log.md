@@ -151,7 +151,8 @@ Format: `.claude/rules/decisions.md`. Newest first. The index with one line per 
   sign (on the south roof ring). `wall_stadium` = civic `tex="ribs"`, red band, arched openings
   showing red seats (`seats=true`). `roof.ring` is no longer used. `roof_stands` stays (unused).
 - **Why:** the user's brief: "take the Beira-Rio as inspiration".
-- **Status:** active
+- **Status:** superseded by coordinator 2026-09-27 · The stadium is an oval building (corners are ground now,
+  walls are oval slices, thinner stands, grass oval around the pitch; leaf roof and lamps unchanged)
 
 ## 2026-09-26 · Rooftop sign neon: gun stores pink (`PAL.z`); PAL gains `s S i`
 - **Decision:** `drawSign` uses `z` for `wall === 'gunshop'`. PAL now mirrors the Lua palette

@@ -142,7 +142,10 @@ const Render = {
     sx.translate(-X, -Y);
     sx.fillStyle = '#12142e';
     for (const it of this.idx.shadows.query(...box)) {
-      if (it.t === 'b') { const b = it.b; for (let d = 0; d <= it.L; d++) sx.fillRect(b.x + Math.round(d * 0.8), b.y + Math.round(d * 0.6), b.w, b.h); }
+      if (it.t === 'b' && it.b.oval) { // the stadium's oval casts an oval
+        const b = it.b, g = this.stadiumGeom(b);
+        for (let d = 0; d <= it.L; d += 2) { sx.beginPath(); sx.ellipse(b.x + g.cx + d * 0.8, b.y + g.cy + d * 0.6, g.A, g.B, 0, 0, Math.PI * 2); sx.fill(); }
+      } else if (it.t === 'b') { const b = it.b; for (let d = 0; d <= it.L; d++) sx.fillRect(b.x + Math.round(d * 0.8), b.y + Math.round(d * 0.6), b.w, b.h); }
       else if (it.t === 't') for (let d = 0; d <= 8; d++) this._disc(sx, it.o.x + d, it.o.y + d * 0.8, 12);
       else for (let d = 0; d <= it.L; d++) this._disc(sx, it.o.x + d * 0.8, it.o.y + d * 0.6, it.o.r);
     }
@@ -500,6 +503,7 @@ const Render = {
     for (const b of c.buildings) {
       const col = styleColor[b.roof.style || b.roof.mat || b.roof.tag || b.roof.type] || hex(PAL.l);
       for (let y = b.ty; y < b.ty + b.th; y++) for (let x = b.tx; x < b.tx + b.tw; x++) {
+        if (b.oval && c.kind[y * c.W + x] !== KIND.BUILDING) continue;
         const edge = x === b.tx || y === b.ty || x === b.tx + b.tw - 1 || y === b.ty + b.th - 1;
         const k = edge ? 0.7 : 1;
         img.data.set([col[0] * k, col[1] * k, col[2] * k, 255], (y * c.W + x) * 4);
@@ -625,6 +629,7 @@ const Render = {
       cv.ctx.globalCompositeOperation = 'multiply';
       cv.ctx.fillStyle = T.ambient;
       cv.ctx.fillRect(0, 0, cv.width, cv.height);
+      if (b.oval) { cv.ctx.globalCompositeOperation = 'destination-in'; cv.ctx.drawImage(src, 0, 0); }   // keep the corners clear
       cv.ctx.globalCompositeOperation = 'source-over';
       cv.ctx.globalAlpha = T.glow;
       cv.ctx.drawImage(this.makeRoofGlow(b), 0, 0);
@@ -686,37 +691,53 @@ const Render = {
     return cv;
   },
 
-  // Beira-Rio style stadium seen from above: an oval white "leaf" roof ring over red
-  // stands, the pitch open in the middle, floodlights along the roof's inner rim and a
-  // paved esplanade in the corners of the footprint. Geometry is shared with the glow.
+  // Beira-Rio style stadium seen from above: an oval building (b.oval) under a white "leaf"
+  // roof ring, a thin ring of red stands, and an oval of grass with the pitch inscribed in it.
+  // Floodlights sit along the roof's inner rim. Outside the oval the roof canvas is
+  // transparent, so the esplanade on the ground shows through. Shared with the glow, the
+  // sign and the walls (stadiumWall).
   stadiumGeom(b) {
     if (b.sgeo) return b.sgeo;
-    const A = b.w / 2 - 6, B = b.h / 2 - 6;                 // outer roof edge (scallops bite in)
-    const ring = Math.round(Math.min(A, B) * 0.3);
-    const a = A - ring, bi = B - ring;                      // inner opening
-    const hw = Math.round(a * 0.66), hh = Math.round(bi * 0.6);   // pitch half size
+    const A = b.w / 2 - 3, B = b.h / 2 - 3;                 // outer wall (city.js claims tiles inside it)
+    const ring = Math.round(Math.min(A, B) * 0.27);
+    const a = A - ring, bi = B - ring;                      // roof opening
+    const st = Math.round(Math.min(a, bi) * 0.2);
+    const ga = a - st, gb = bi - st;                        // grass oval inside the stands
+    const hw = Math.round(ga * 0.74), hh = Math.round(gb * 0.64);   // pitch half size, corners inside the grass
     const N = Math.max(24, Math.round((Math.PI * (A + B)) / 20));  // leaves around the ring
-    b.sgeo = { cx: b.w / 2, cy: b.h / 2, A, B, a, bi, hw, hh, N };
+    b.sgeo = { cx: b.w / 2, cy: b.h / 2, A, B, a, bi, ga, gb, st, hw, hh, N };
     return b.sgeo;
   },
 
+  // scalloped outer edge: leaf tips reach the ellipse, the gaps between them bite in 3%
+  stadiumOuter(g, dx, dy) {
+    const s = (Math.atan2(dy / g.B, dx / g.A) / (Math.PI * 2)) * g.N;
+    return Math.sqrt((dx / g.A) ** 2 + (dy / g.B) ** 2) <= 1 - 0.03 * (1 - Math.sin(Math.PI * (s - Math.floor(s))));
+  },
+
+  // letters -> pixels; null stays transparent
+  paintBuf(ctx, W, H, buf) {
+    const img = ctx.createImageData(W, H), rgb = {};
+    for (let i = 0; i < W * H; i++) {
+      if (!buf[i]) continue;
+      const hx = PAL[buf[i]] || PAL.m;
+      const v = rgb[hx] || (rgb[hx] = [parseInt(hx.slice(1, 3), 16), parseInt(hx.slice(3, 5), 16), parseInt(hx.slice(5, 7), 16)]);
+      img.data[i * 4] = v[0]; img.data[i * 4 + 1] = v[1]; img.data[i * 4 + 2] = v[2]; img.data[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+  },
+
   stadiumRoof(b) {
-    const g = this.stadiumGeom(b), { cx, cy, A, B, a, bi, hw, hh, N } = g;
+    const g = this.stadiumGeom(b), { cx, cy, A, B, a, bi, ga, gb, hw, hh, N } = g;
     const W = b.w, H = b.h, cv = mkCanvas(W, H), ctx = cv.ctx;
     const TAU = Math.PI * 2, frac = (v) => v - Math.floor(v);
-    const roofAt = (x, y) => {                              // leaf-roof mask with scalloped outer edge
-      const dx = x + 0.5 - cx, dy = y + 0.5 - cy;
-      const eI = (dx / a) ** 2 + (dy / bi) ** 2;
-      if (eI <= 1) return false;
-      const s = frac((Math.atan2(dy / B, dx / A) / TAU) * N);
-      return Math.sqrt((dx / A) ** 2 + (dy / B) ** 2) <= 1 - 0.03 * (1 - Math.sin(Math.PI * s));
-    };
-    const buf = new Array(W * H), roof = new Uint8Array(W * H);
+    const buf = new Array(W * H).fill(null), roof = new Uint8Array(W * H);
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       const i = y * W + x, dx = x + 0.5 - cx, dy = y + 0.5 - cy;
       const eO = (dx / A) ** 2 + (dy / B) ** 2, eI = (dx / a) ** 2 + (dy / bi) ** 2;
-      let c;
-      if (roofAt(x, y)) {
+      let c = null;
+      if (eI > 1) {
+        if (!this.stadiumOuter(g, dx, dy)) { buf[i] = null; continue; }
         roof[i] = 1;
         const rin = Math.sqrt(eO / eI), t = (Math.sqrt(eO) - rin) / (1 - rin);   // 0 inner rim .. 1 outer edge
         const s = frac((Math.atan2(dy / B, dx / A) / TAU) * N);
@@ -726,46 +747,35 @@ const Render = {
         else if (s < 0.2) c = lit ? 'i' : 'l';             // the next leaf's overlap shadow
         else if (t > 0.9) c = lit ? 'x' : 'i';             // leaf tips curling down
         else c = s > 0.7 && !lit ? 'i' : 'x';
-      } else if (eI <= 1) {
-        const inPitch = Math.abs(dx) <= hw && Math.abs(dy) <= hh;
-        const sur = Math.abs(dx) <= hw + 8 && Math.abs(dy) <= hh + 8;
-        if (inPitch) c = Math.floor((dx + hw) / 16) % 2 ? 'h' : 'G';
-        else if (sur) {
-          const board = Math.abs(dx) > hw + 5 || Math.abs(dy) > hh + 5;
-          const along = Math.abs(dx) > hw + 5 ? y : x;
-          c = board ? (Math.abs(dx) > hw + 6 || Math.abs(dy) > hh + 6 ? 'k' : ['x', 'F', 'p', 'Y'][Math.floor(along / 12) % 4]) : 'G';
-        } else {
+      } else {
+        const eG = (dx / ga) ** 2 + (dy / gb) ** 2;
+        if (eG > 1) {                                       // red stands, rows parallel to the rim
           const d = (1 - Math.sqrt(eI)) * Math.min(a, bi);  // px in from the rim
-          const aisle = frac((Math.atan2(dy / bi, dx / a) / TAU) * 32) < 0.035;
-          if (Math.floor(d) === 16) c = 'x';                 // walkway between the tiers
+          const dg = (Math.sqrt(eG) - 1) * Math.min(ga, gb); // px out from the grass
+          const aisle = frac((Math.atan2(dy / bi, dx / a) / TAU) * 40) < 0.04;
+          if (dg < 1.5) c = 'k';                            // the low wall in front of the first row
+          else if (dg < 3) c = 'l';
+          else if (Math.floor(d) === Math.round(g.st * 0.45)) c = 'x';   // walkway between the tiers
           else if (aisle) c = 'l';
           else c = Math.floor(d) % 3 === 0 ? 'r' : 'R';
+        } else {                                            // grass: mowing stripes across the pitch
+          const inPitch = Math.abs(dx) <= hw && Math.abs(dy) <= hh;
+          c = inPitch ? (Math.floor((dx + hw) / (hw / 7)) % 2 ? 'h' : 'G') : eG > 0.93 ? 'g' : 'G';
         }
-      } else {                                              // esplanade: argyle paving on a tile grid
-        const k = ((Math.floor((x + y) / 8) + Math.floor((x - y + 1024) / 8)) & 1);
-        c = x % 16 === 0 || y % 16 === 0 ? 't' : k ? 'T' : 'c';
-        if (Math.sqrt(eO) < 1.035 && Math.sqrt(eO) > 1.02) c = 'p';   // pink curb along the bowl
       }
       buf[i] = c;
     }
-    // roof edges outlined, and the roof's shadow falling to the bottom-right
-    const DARK = { x: 'l', i: 'l', l: 'm', m: 'd', d: 'k', T: 't', c: 'T', t: 's', p: 'R', R: 'r', r: 'u', G: 'g', h: 'G',
-      F: 'f', Y: 'y', k: 'K', s: 'S' };
+    // roof outlined, and the roof's shadow falling to the bottom-right onto the stands and grass
+    const DARK = { x: 'l', i: 'l', l: 'm', m: 'd', d: 'k', R: 'r', r: 'u', G: 'g', h: 'G', k: 'K', g: 'K' };
     const out = buf.slice();
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       const i = y * W + x;
       if (roof[i]) continue;
       const nb = (x > 0 && roof[i - 1]) || (x < W - 1 && roof[i + 1]) || (y > 0 && roof[i - W]) || (y < H - 1 && roof[i + W]);
       if (nb) out[i] = 'K';
-      else if (x >= 5 && y >= 5 && roof[i - 5 * W - 5]) out[i] = DARK[buf[i]] || buf[i];
+      else if (buf[i] && x >= 5 && y >= 5 && roof[i - 5 * W - 5]) out[i] = DARK[buf[i]] || buf[i];
     }
-    const img = ctx.createImageData(W, H), rgb = {};
-    for (let i = 0; i < W * H; i++) {
-      const hx = PAL[out[i]] || PAL.m;
-      const v = rgb[hx] || (rgb[hx] = [parseInt(hx.slice(1, 3), 16), parseInt(hx.slice(3, 5), 16), parseInt(hx.slice(5, 7), 16)]);
-      img.data[i * 4] = v[0]; img.data[i * 4 + 1] = v[1]; img.data[i * 4 + 2] = v[2]; img.data[i * 4 + 3] = 255;
-    }
-    ctx.putImageData(img, 0, 0);
+    this.paintBuf(ctx, W, H, out);
     // pitch markings and goals
     ctx.fillStyle = PAL.x;
     const X0 = Math.round(cx - hw + 3), Y0 = Math.round(cy - hh + 3), PW = hw * 2 - 6, PH = hh * 2 - 6;
@@ -775,7 +785,7 @@ const Render = {
     const r = PH * 0.14;
     for (let t = 0; t < TAU; t += 0.05) line(cx + Math.cos(t) * r, cy + Math.sin(t) * r, 1, 1);
     line(cx - 1, cy - 1, 3, 3);
-    const bw = PH * 0.5, bd = PW * 0.13, sw = PH * 0.24, sd = PW * 0.05;
+    const bw = PH * 0.6, bd = PW * 0.15, sw = PH * 0.28, sd = PW * 0.05;
     for (const end of [0, 1]) {
       const x = end ? X0 + PW - bd : X0, xs = end ? X0 + PW - sd : X0;
       line(x, cy - bw / 2, bd, 1); line(x, cy + bw / 2, bd, 1); line(end ? x : x + bd, cy - bw / 2, 1, bw);
@@ -784,6 +794,44 @@ const Render = {
       ctx.fillStyle = PAL.K; line(end ? X0 + PW : X0 - 4, cy - 8, 4, 16);
       ctx.fillStyle = PAL.l; line(end ? X0 + PW : X0 - 3, cy - 7, 3, 14); ctx.fillStyle = PAL.x;
     }
+    // team dugouts on the north touchline, the 4th official's box between them
+    for (const sx of [-1, 1]) {
+      ctx.fillStyle = PAL.K; line(cx + sx * 26 - 9, Y0 - 9, 18, 6);
+      ctx.fillStyle = sx < 0 ? PAL.B : PAL.r; line(cx + sx * 26 - 8, Y0 - 8, 16, 4);
+    }
+    ctx.fillStyle = PAL.x; line(cx - 2, Y0 - 7, 4, 3);
+    return cv;
+  },
+
+  // one horizontal slice of the oval wall (the scalloped outline). drawBuilding stacks them
+  // from the base to the roof so the side reads as an extruded oval: the lower third is the
+  // shaded concrete base with columns, the rest the white leaves hanging down.
+  stadiumWall(b, upper, time) {
+    const key = 'oval' + (upper ? 1 : 0) + ':' + time;
+    let cv = b.cache.get(key);
+    if (cv) return cv;
+    const g = this.stadiumGeom(b), W = b.w, H = b.h, TAU = Math.PI * 2;
+    const buf = new Array(W * H).fill(null);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const dx = x + 0.5 - g.cx, dy = y + 0.5 - g.cy;
+      if (!this.stadiumOuter(g, dx, dy)) continue;
+      const s = ((Math.atan2(dy / g.B, dx / g.A) / TAU) * g.N) % 1, sp = s < 0 ? s + 1 : s;
+      if (upper) buf[y * W + x] = sp < 0.06 ? 'm' : sp < 0.22 ? 'l' : sp > 0.8 ? 'i' : 'x';
+      else buf[y * W + x] = sp < 0.12 ? 'l' : sp < 0.2 ? 'm' : 'd';
+    }
+    cv = mkCanvas(W, H);
+    this.paintBuf(cv.ctx, W, H, buf);
+    if (time) {
+      const T = TIMES[time], day = mkCanvas(W, H);
+      day.ctx.drawImage(cv, 0, 0);
+      cv.ctx.globalCompositeOperation = 'multiply';
+      cv.ctx.fillStyle = T.ambient; cv.ctx.fillRect(0, 0, W, H);
+      cv.ctx.globalCompositeOperation = 'destination-in';
+      cv.ctx.drawImage(day, 0, 0);
+      cv.ctx.globalCompositeOperation = 'source-over';
+    }
+    if (b.cache.size > 12) b.cache.delete(b.cache.keys().next().value);
+    b.cache.set(key, cv);
     return cv;
   },
 
@@ -930,6 +978,15 @@ const Render = {
       for (const [px, py] of [[4, 4], [W - 7, 4], [4, D - 7], [W - 7, D - 7]]) {
         const steps = Math.max(Math.abs(ox), Math.abs(oy), 1);
         for (let i = 0; i <= steps; i++) ctx.fillRect(X + px + Math.round((ox * i) / steps), Y + py + Math.round((oy * i) / steps), 3, 3);
+      }
+      ctx.drawImage(this.roof(b, time), X + ox, Y + oy);
+      return;
+    }
+    if (b.oval) { // an oval (the stadium): stack wall slices from the base up to the roof
+      const steps = Math.max(Math.abs(ox), Math.abs(oy));
+      for (let i = 0; i < steps; i++) {
+        const t = i / steps;
+        ctx.drawImage(this.stadiumWall(b, t > 0.3, time), X + Math.round(ox * t), Y + Math.round(oy * t));
       }
       ctx.drawImage(this.roof(b, time), X + ox, Y + oy);
       return;

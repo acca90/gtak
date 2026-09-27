@@ -21,7 +21,7 @@ new entries there AND a line here. Status is active unless marked.
 - 2026-09-26 · **`tiles:runway`** frame 4 = east edge (mirror of 3); the propplane faces up.
 - 2026-09-26 · **Ships and planes at world scale:** `planes` 288², `boats` 64×208, `ships` 192×976.
   The committed fx/heavy/wide differ from a fresh generation: never `regenerate` them blindly.
-- 2026-09-26 · **Stadium = Beira-Rio:** a procedural leaf roof in `Render.stadiumRoof`.
+- 2026-09-27 · **Stadium = oval Beira-Rio:** procedural leaf roof + oval wall slices (`stadiumWall`), corners are ground (see coordinator log).
 - 2026-09-26 · **Sign neon:** gun stores use pink `PAL.z`; PAL mirrors the full Lua palette.
 - 2026-09-26 · **Weapons v2 art:** the gun store kit, `shop` sheet 64×32, icons with the muzzle right.
 - 2026-09-25 · **World v2 art:** `_h` road tiles = transpose of `_v` (sheet sizes superseded).
