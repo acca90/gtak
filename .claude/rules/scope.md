@@ -1,8 +1,8 @@
 # Scope (set by the user; don't expand without asking)
 
 - **Traffic: unlocked** 2026-09-26 (spec `docs/specs/traffic-v1.md`).
-- **Pedestrians and cows: unlocked** 2026-09-27 (spec `docs/specs/peds-v1.md`). Carjacking moving traffic is the
-  next round, not this one.
+- **Pedestrians and cows: unlocked** 2026-09-27 (spec `docs/specs/peds-v1.md`); carjacking built the same day.
+- **Police:** basic foot cops only (spec `docs/specs/cops-v1.md`); the wanted level and police cars are the next slice.
 - **Gangs / mobs and the story: unlocked** 2026-09-27, owned by `screenplay-agent`. `mobs.txt` is the user's
   draft: read it, never edit it.
 - **Sound:** being built now (spec `docs/specs/sound-v1.md`, owned by `sound-agent`). Radio music is still on hold.

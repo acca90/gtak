@@ -10,7 +10,7 @@ Size is a first guess made before any design, not a measurement.
 | # | Item | Size (guess) | Status | Depends on / touches |
 |---|---|---|---|---|
 | 0 | In-game time system | small–medium | built, awaiting play test (`docs/specs/time-v1.md`) | Replaces the O/N day-night toggle with a clock. Needed by 2 (decay timers), 6 (skip 30 min), 9 (save the clock). |
-| 1 | Pedestrians / citizens | large | built, awaiting play test (`docs/specs/peds-v1.md`); cows as farm civilians; carjacking next round | Lifts the "no pedestrians" scope limit. Needs walkable sidewalk paths. Base for 2, 3 and 8's crossings. |
+| 1 | Pedestrians / citizens | large | built, awaiting play test (`docs/specs/peds-v1.md`); cows as farm civilians; carjacking built too | Lifts the "no pedestrians" scope limit. Needs walkable sidewalk paths. Base for 2, 3 and 8's crossings. |
 | 2 | Police and a 5-star wanted level | large | first slice built, awaiting play test (`docs/specs/cops-v1.md`: foot cops only); wanted level, police cars, SWAT, helicopter still to do | Needs NPC drivers (8) and cops on foot (1), plus new vehicles (SWAT van, police helicopter). |
 | 3 | Three gangs, like GTA2 | massive | mob systems built (`docs/specs/gangs-v1.md`: respect, turf, members, gang cars), awaiting play test; story/missions parked (`docs/story/`) | Needs 1 (gang members), territory from geo-agent, and ties into 7. |
 | 4 | Main character's home | small–medium | idea | Natural save point for 9. Geo-agent places it. |

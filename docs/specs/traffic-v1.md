@@ -1,6 +1,6 @@
 # Spec: Traffic (backlog item 8)
 
-Status: phase A built; **phase B built** 2026-09-26 (B1-B4 done; B5 open: downtown looks thin, raise its density; the user's play test). Nothing play-tested. Phase B is designed after A is done. Coordinator: main session.
+Status: phase A built; **phase B built** 2026-09-26 (B1-B4 done; B5: downtown density raised 3.0 -> 5.0 on 2026-09-27; the user's play test still open). Nothing play-tested. Phase B is designed after A is done. Coordinator: main session.
 This lifts the "no traffic" scope limit (the user, 2026-09-26). Pedestrians stay out of scope for now.
 
 ## Phase A: the area of view (AOV)
